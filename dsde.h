@@ -12,7 +12,7 @@ DSDE_Handle DSDE_HANDLE_NULL = NULL;
 /* Collective over all procs in specified communicator in which each process specifies
  * which ranks it has data for, and as output, it receives a list of ranks that have
  * sent data to it along with pointers to that data.  Data is stored in internal DSDE
- * resources which must be freed by call to DSDE_Free to release resources assocaited
+ * resources which must be freed by a call to DSDE_Free to release resources associated
  * with output handle.
  *
  * DSDE_Handle handle;
@@ -55,7 +55,7 @@ int DSDE_Reduce_scatter_block(
   MPI_Aint     sdispls[],  /* IN  - integer array (of length srankcount) of displs to send to dests[i] */
   int*         flag,       /* OUT - true if data in recvbuf is valid (logical) */
   void*        recvbuf,    /* OUT - starting address of receive buffer (choice) */
-  MPI_Aint     recvcount,  /* OUT - element count per block (non-negative integer) */
+  MPI_Aint     recvcount,  /* IN  - element count per block (non-negative integer) */
   MPI_Datatype datatype,   /* IN  - data type of elements of send and receive buffers (handle) */
   MPI_Op       op,         /* IN  - operation (handle) */
   MPI_Comm     comm        /* IN  - communicator (handle) */
