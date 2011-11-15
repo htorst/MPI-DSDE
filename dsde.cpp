@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <assert.h>
 
+DSDE_Handle DSDE_HANDLE_NULL = NULL;
+
 enum handle_type {
   DSDE_HT_BUF = 1, /* the handle value itself is the pointer to the buffer to be freed */
   DSDE_HT_MAX      /* place all values before this one */

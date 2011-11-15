@@ -4,10 +4,10 @@ extern "C" {
 
 /* handle to an object that tracks internal resources allocated during a DSDE call,
  * active handles must be freed with call to DSDE_Free to free internal resources */
-typedef DSDE_Handle void*;
+typedef void* DSDE_Handle;
 
 /* we define a NULL handle as DSDE_HANDLE_NULL */
-DSDE_Handle DSDE_HANDLE_NULL = NULL;
+extern DSDE_Handle DSDE_HANDLE_NULL;
 
 /* Collective over all procs in specified communicator in which each process specifies
  * which ranks it has data for, and as output, it receives a list of ranks that have
