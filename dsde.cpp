@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <assert.h>
 
+/* will hold duplicate of MPI_COMM_SELF, needed for DSDE_Memcpy */
+static MPI_Comm dsde_comm_self = MPI_COMM_NULL;
+
 DSDE_Handle DSDE_HANDLE_NULL = NULL;
 
 enum handle_type {
@@ -27,6 +30,9 @@ int DSDE_Exchange(
   void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
   MPI_Comm comm, DSDE_Handle* handle)
 {
+  /* TODO: need to handle case that Aint value is larger than int */
+
+  /* execute sendrecv to ourself on comm_self */
   int p;
   MPI_Comm_size(MPI_COMM_WORLD, &p);
   std::vector<int> ssizes(p,0), rsizes(p);
@@ -134,5 +140,31 @@ int DSDE_Free(DSDE_Handle* handle)
     }
   }
   return MPI_SUCCESS:
+}
+
+/* copy memory from srcbuf to dstbuf using committed MPI datatypes */
+int DSDE_Memcpy(
+  void* dstbuf,       MPI_Aint dstcount, MPI_Datatype dsttype,
+  const void* srcbuf, MPI_Aint srccount, MPI_Datatype srctype)
+{
+  /* get a dup of MPI_COMM_SELF */
+  if (dsde_comm_self == MPI_COMM_NULL) {
+    MPI_Comm_dup(MPI_COMM_SELF, &dsde_comm_self);
+  }
+
+  /* TODO: need to handle case that Aint value is larger than int */
+
+  /* execute sendrecv to ourself on comm_self */
+  MPI_Sendrecv(srcbuf, srccount, srctype, 0, 999, dstbuf, dstcount, dsttype, 0, 999, dsde_comm_self);
+
+  return MPI_SUCCESS;
+}
+
+int DSDE_Reduce_scatter_block(
+  void* sendbuf, int srankcount, int sranks[], MPI_Aint sdispls[],
+  int* flag, void* recvbuf, MPI_Aint recvcount, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
+{
+  *flag = 0;
+  return MPI_SUCCESS;
 }
 

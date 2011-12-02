@@ -9,6 +9,20 @@ typedef void* DSDE_Handle;
 /* we define a NULL handle as DSDE_HANDLE_NULL */
 extern DSDE_Handle DSDE_HANDLE_NULL;
 
+/* Copies data from one buffer to another on the same process using MPI
+ * datatypes.  The number of basic elements specified by dstcount and
+ * dsttype must be equal to the number of elements specified by srccount
+ * and srctype, and both dsttype and srctype must be committed.
+ * Otherwise, the call is erroneous.  */
+int DSDE_Memcpy(
+  void*        dstbuf,    /* OUT - buffer to copy data to */
+  MPI_Aint     dstcount,  /* IN  - number of elements of type dsttype to be stored to dstbuf */
+  MPI_Datatype dsttype,   /* IN  - datatype of elements in dstbuf */
+  const void*  srcbuf,    /* IN  - source buffer to copy data from */ 
+  MPI_Aint     srccount,  /* IN  - number of elements of type srctype to be copied from srcbuf */
+  MPI_Datatype srctype    /* IN  - datatype of elements in srcbuf */
+);
+
 /* Collective over all procs in specified communicator in which each process specifies
  * which ranks it has data for, and as output, it receives a list of ranks that have
  * sent data to it along with pointers to that data.  Data is stored in internal DSDE
