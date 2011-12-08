@@ -1,9 +1,13 @@
 MPICXX=mpicxx
+CFLAGS=-g 
 
-all: dsde.o
+all: dsde.o main
 
-dsde.o: dsde.cpp dsde.h
-	$(MPICXX) -c dsde.cpp -o dsde.o -I.
+dsde.o: dsde.cpp *.h
+	$(MPICXX) $(CFLAGS) -c dsde.cpp -o dsde.o -I.
+
+main: main.cpp dsde.o *h
+	$(MPICXX) $(CFLAGS) $< dsde.o -o $@
 
 clean:
 	rm -f dsde.o

@@ -1,4 +1,18 @@
 #include <mpi.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <assert.h>
+
+#include <vector>
+#include <string>
+#include <numeric>
+#include <algorithm>
+#include <limits>
+#include <iostream>
+#include <ctime>
+#include <set>
+#include <queue>
 
 extern "C" {
 
@@ -74,5 +88,11 @@ int DSDE_Reduce_scatter_block(
   MPI_Op       op,         /* IN  - operation (handle) */
   MPI_Comm     comm        /* IN  - communicator (handle) */
 );
+
+/* this may be temp */
+int DSDE_Exchange_alltoall(
+  void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint  sendcounts[], MPI_Aint  sdispls[], MPI_Datatype sendtype,
+  void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
+  MPI_Comm comm, DSDE_Handle* handle);
 
 } /* extern "C" */
