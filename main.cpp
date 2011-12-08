@@ -38,7 +38,7 @@ int main() {
   sranks.push_back((r+2)%p);
   sranks.push_back((r+3)%p);
 
-  DSDE_Exchange_reduce_scatter(&sbuf[0], sranks.size(), &sranks[0], &scounts[0], &sdispls[0], MPI_INT,
+  DSDE_Exchange_ibarrier(&sbuf[0], sranks.size(), &sranks[0], &scounts[0], &sdispls[0], MPI_INT,
                          (void**)&rbuf, &rrankcount, &rranks, &rcounts, &rdispls, MPI_INT, MPI_COMM_WORLD, &handle);
 
   if(2==2) {
