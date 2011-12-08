@@ -38,10 +38,10 @@ int main() {
   sranks.push_back((r+2)%p);
   sranks.push_back((r+3)%p);
 
-  DSDE_Exchange_alltoall(&sbuf[0], sranks.size(), &sranks[0], &scounts[0], &sdispls[0], MPI_INT,
+  DSDE_Exchange_reduce_scatter(&sbuf[0], sranks.size(), &sranks[0], &scounts[0], &sdispls[0], MPI_INT,
                          (void**)&rbuf, &rrankcount, &rranks, &rcounts, &rdispls, MPI_INT, MPI_COMM_WORLD, &handle);
 
-  if(r==2) {
+  if(2==2) {
     printf("[%i] received from %i ranks\n", r, rrankcount);
     for(int i=0; i<rrankcount; ++i) {
       printf("[%i] received %i elements at offset %i (%i) from %i\n", r, rcounts[i], rdispls[i], rbuf[i], rranks[i]);

@@ -94,5 +94,9 @@ int DSDE_Exchange_alltoall(
   void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint  sendcounts[], MPI_Aint  sdispls[], MPI_Datatype sendtype,
   void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
   MPI_Comm comm, DSDE_Handle* handle);
+int DSDE_Exchange_reduce_scatter(
+  void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint  sendcounts[], MPI_Aint  sdispls[], MPI_Datatype sendtype,
+  void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
+  MPI_Comm comm, DSDE_Handle* handle);
 
 } /* extern "C" */

@@ -1,13 +1,17 @@
 MPICXX=mpicxx
 CFLAGS=-g 
 
-all: dsde.o main
+all: libdsde.a main
 
-dsde.o: dsde.cpp *.h
-	$(MPICXX) $(CFLAGS) -c dsde.cpp -o dsde.o -I.
+libdsde.a: dsde.o dsde_exchange_alltoall.o dsde_exchange_reduce_scatter.o
+	ar r $@ dsde.o dsde_exchange_alltoall.o dsde_exchange_reduce_scatter.o
+	ranlib $@
 
-main: main.cpp dsde.o *h
-	$(MPICXX) $(CFLAGS) $< dsde.o -o $@
+%.o: %.cpp *.h
+	$(MPICXX) $(CFLAGS) -c $< -o $@ -I.
+
+main: main.cpp dsde.o *h libdsde.a
+	$(MPICXX) $(CFLAGS) $< libdsde.a -o $@
 
 clean:
-	rm -f dsde.o
+	rm -f *.o main
