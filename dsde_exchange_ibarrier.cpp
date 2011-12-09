@@ -6,7 +6,7 @@
  */
 #include "dsde.h"
 
-#ifdef BGP
+#ifdef HAVE_DCMF
 #include <dcmf_globalcollectives.h>
 #else
 #include <nbc.h>
@@ -17,7 +17,7 @@ static int nbctag=9;
 static volatile char done=0;
 static char initialized=0;
 
-#ifdef BGP
+#ifdef HAVE_DCMF
 static void cbfunc(void *clientdata, DCMF_Error_t *error) {
   done=1;
 }
@@ -28,7 +28,7 @@ DCMF_Request_t barr_req;
 
 
 static void prepare_mpi3nbc(MPI_Comm comm) {
-#ifdef BGP
+#ifdef HAVE_DCMF
   int res;
   MPI_Comm_compare(comm, MPI_COMM_WORLD, &res);
   if(res == MPI_UNEQUAL) {
@@ -94,7 +94,7 @@ int DSDE_Exchange_ibarrier(
 
   int barr_act=0;
   done=0;
-#ifndef BGP
+#ifndef HAVE_DCMF
   NBC_Handle hndl;
 #endif
   while(!done) {
@@ -117,7 +117,7 @@ int DSDE_Exchange_ibarrier(
     }
 
     if(barr_act) {
-#ifndef BGP
+#ifndef HAVE_DCMF
       if(NBC_OK == NBC_Test(&hndl)) {
         NBC_Wait(&hndl); // needed to free request
         //if(!r) std::cout <<"["<<r<<"] barrier finished\n";
@@ -127,7 +127,7 @@ int DSDE_Exchange_ibarrier(
     } else {
       MPI_Testall(sreqs.size(), &sreqs[0], &flag, MPI_STATUSES_IGNORE);
       if(flag || sreqs.empty()) {
-#ifndef BGP
+#ifndef HAVE_DCMF
         NBC_Ibarrier(libcomm, &hndl);
 #else
         DCMF_Callback_t callback={ cbfunc, (void*)NULL };
