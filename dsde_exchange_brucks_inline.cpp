@@ -1,10 +1,6 @@
 /* Code for homogeneous systems */
 
-/* if sendtype is same on all ranks and if sendtype == recvtype on all ranks,
- *   send count along with packed msg so reciever knows how big to allocate buffer to copy final message into
- * if sendcount != recvtype,
- *   then must send type signature?
- *   or iterate over number of packed recvtypes until find match? */
+/* Transfers message via Bruck's algorithm, inlines all data so works best with small messages */
 
 #include <stdio.h>
 #include <unistd.h>
@@ -17,14 +13,10 @@
 #include <math.h>
 #include "dsde.h"
 
-#define ELEM_DIRECT  (1)
-#define ELEM_INLINED (2)
-
 /* function to print error messages, just throw away for now */
 #define sparse_abort
 
 /* TODO: make these more dynamic */
-static int sparse_network_inline = 512;
 static int sparse_network_degree = 2;
 
 /* In the Brucks implementation, we pack and forward data through intermediate ranks.
@@ -43,18 +35,13 @@ static int sparse_network_degree = 2;
 typedef struct {
   int rank;    /* rank of final destination */
   int msgs;    /* count of total number of messages headed for destination */
-  int bytes;   /* count of total number of data bytes headed for destination */
-  int payload; /* number of bytes in current packet (total element headers and data for dest) */
-} exv_packet_header;
+} exi_packet_header;
 
 /* and each element header contains: */
 
 typedef struct {
   int rank;  /* rank of original sender */
-  int type;  /* element type: INLINED, DIRECT, PACKED */
-  int size;  /* number of message bytes associated with element */
-  int count; /* number of message bytes associated with element */
-} exv_elem_header;
+} exi_elem_header;
 
 /* qsort integer compare (using first four bytes of structure) */
 int int_cmp_fn(const void* a, const void* b)
@@ -62,19 +49,22 @@ int int_cmp_fn(const void* a, const void* b)
   return (int) (*(int*)a - *(int*)b);
 }
 
-/* pack send data into buf, which is allocated and returned as well as an array of requests for any direct sends */
+/* pack send data into buf, which is allocated and returned */
 static int sparse_pack(
-  void* sendbuf, int srankcount, int sranks[], MPI_Aint sendcounts[], MPI_Aint sdispls[], MPI_Datatype sendtype,
-  void** outbuf, int* outbuf_size, MPI_Request* outreq[], int* out_nreq, MPI_Comm comm)
+  void* sendbuf, int srankcount, int sranks[], MPI_Aint sendcount, MPI_Aint sdispls[], MPI_Datatype sendtype,
+  void** outbuf, int* outbuf_size, int* outelem_size, MPI_Comm comm)
 {
   int i;
   int rc = MPI_SUCCESS;
 
   /* we'll copy these values over to the output parameters before returning */
-  void* buf        = NULL;
-  int buf_offset   = 0;
-  MPI_Request* req = NULL;
-  int nreq         = 0;
+  void* buf      = NULL;
+  int buf_offset = 0;
+
+  /* compute size of packed element */
+  int send_size;
+  MPI_Pack_size(sendcount, sendtype, comm, &send_size);
+  int elem_size = sizeof(exi_elem_header) + send_size;
 
   /* prepare our initial data for sending */
   if (srankcount > 0) {
@@ -88,14 +78,6 @@ static int sparse_pack(
     MPI_Aint sendlb, sendextent;
     MPI_Type_get_extent(sendtype, &sendlb, &sendextent);
 
-    /* allocate requests for direct sends, potentially up to srankcount of them */
-    req = (MPI_Request*) malloc(srankcount * sizeof(MPI_Request));
-    if (req == NULL) {
-      sparse_abort(1, "Failed to allocate memory for direct send requests @ %s:%d",
-        __FILE__, __LINE__
-      );
-    }
-
     /* allocate space to sort ranks */
     int* sort_list = (int*) malloc(2 * sizeof(int) * srankcount);
     if (sort_list == NULL) {
@@ -104,24 +86,21 @@ static int sparse_pack(
       );
     }
 
-    /* prepare list for sorting and compute max memory that we'll need for packing data */
-    int max_packed = 0;
+    /* compute max memory that we'll need for packing data */
+    int max_packed = send_size * srankcount;
+
+    /* prepare list for sorting */
     for (i = 0; i < srankcount; i++) {
       /* record rank and its original index within the sranks array */
       sort_list[i*2+0] = sranks[i];
       sort_list[i*2+1] = i;
-
-      /* add number of bytes for this message to our max_packed count */
-      int send_size;
-      MPI_Pack_size(sendcounts[i], sendtype, comm, &send_size);
-      max_packed += send_size;
     }
 
     /* sort ranks in ascending order */
     qsort(sort_list, srankcount, 2 * sizeof(int), &int_cmp_fn);
 
     /* for each message we might send, allocate packet header, element header, and space to pack its data */
-    int buf_maxsize = (sizeof(exv_packet_header) + sizeof(exv_elem_header)) * srankcount + max_packed;
+    int buf_maxsize = (sizeof(exi_packet_header) + sizeof(exi_elem_header)) * srankcount + max_packed;
     buf = malloc(buf_maxsize);
     if (buf == NULL) {
       sparse_abort(1, "Failed to allocate temporary send buffer @ %s:%d",
@@ -148,60 +127,28 @@ static int sparse_pack(
         /* get pointer to start of buffer for this message */
         void* sendptr = (char*)sendbuf + sdispls[rank_index] * sendextent;
 
-        /* get number of elements we're sending */
-       int sendcount = sendcounts[rank_index];
-
-        /* get amount of data we'll send to this rank */
-        int bytes;
-        MPI_Type_size(sendtype, &bytes);
-        bytes *= sendcount;
-//        MPI_Pack_size(sendcounts[rank_index], sendtype, comm, &bytes);
-
-        /* assume we'll send our message direct, but inline data if it's small enough */
-        int elem_type = ELEM_DIRECT;
-        if (bytes <= sparse_network_inline) {
-          elem_type = ELEM_INLINED;
-        }
-
         /* allocate space for a packet header */
-        exv_packet_header* packet = (exv_packet_header*) ((char*)buf + buf_offset);
-        buf_offset += sizeof(exv_packet_header);
+        exi_packet_header* packet = (exi_packet_header*) ((char*)buf + buf_offset);
+        buf_offset += sizeof(exi_packet_header);
 
         /* allocate space for an element header */
-        exv_elem_header* elem = (exv_elem_header*) ((char*)buf + buf_offset);
-        buf_offset += sizeof(exv_elem_header);
+        exi_elem_header* elem = (exi_elem_header*) ((char*)buf + buf_offset);
+        buf_offset += sizeof(exi_elem_header);
 
-        /* prepare packet payload */
-        int payload = sizeof(exv_elem_header);
-        if (elem_type == ELEM_INLINED) {
-          /* pack our inlined data */
-          int packed_size = 0;
-          MPI_Pack(
-            sendptr, sendcount, sendtype,
-            (char*)buf + buf_offset, buf_maxsize - buf_offset, &packed_size, comm
-          );
-          bytes       = packed_size;
-          payload    += packed_size;
-          buf_offset += packed_size;
-        }
+        /* pack our inlined data */
+        int packed_size = 0;
+        MPI_Pack(
+          sendptr, sendcount, sendtype,
+          (char*)buf + buf_offset, buf_maxsize - buf_offset, &packed_size, comm
+        );
+        buf_offset += packed_size;
 
         /* fill in our packet header */
-        packet->rank    = dest_rank;
-        packet->msgs    = 1;
-        packet->bytes   = bytes;
-        packet->payload = payload;
+        packet->rank = dest_rank;
+        packet->msgs = 1;
 
         /* fill in out element header */
-        elem->rank  = rank;
-        elem->type  = elem_type;
-        elem->size  = bytes;
-        elem->count = sendcount;
-
-        if (elem_type == ELEM_DIRECT) {
-          /* if the data is to be sent directly, issue the issend call */
-          MPI_Issend(sendptr, sendcount, sendtype, dest_rank, ELEM_DIRECT, comm, &req[nreq]);
-          nreq++;
-        }
+        elem->rank = rank;
       } else if (dest_rank != MPI_PROC_NULL) {
         /* error, rank out of range */
         sparse_abort(1, "Invalid destination rank %d @ %s:%d",
@@ -218,10 +165,9 @@ static int sparse_pack(
   }
 
   /* update output parameters */
-  *outbuf      = buf;
-  *outbuf_size = buf_offset;
-  *outreq      = req;
-  *out_nreq    = nreq;
+  *outbuf       = buf;
+  *outbuf_size  = buf_offset;
+  *outelem_size = elem_size;
 
   return rc;
 }
@@ -231,13 +177,13 @@ static int sparse_pack(
  * into a single merge buffer in preparation for the next round */
 static int sparse_merge_bufs(
   int rank, int ranks, int factor, int degree, /* position within brucks algorithm */
-  void* sendbuf, int sendsize, int nrecv, void* recvbufs[], int recvsizes[], /* send buf and array of recv bufs */
+  int elem_size, void* sendbuf, int sendsize, int nrecv, void* recvbufs[], int recvsizes[], /* send buf and array of recv bufs */
   int recvoffsets[], void* payload_bufs[], int payload_sizes[], /* scratch space */
   void* mergebuf, int* out_mergesize) /* output buffer containing merged data */
 {
   int i;
   int rc = MPI_SUCCESS;
-  exv_packet_header* packet = NULL;
+  exi_packet_header* packet = NULL;
 
   /* initialize our offsets to point to first byte of each input buffer */
   int sendoffset  = 0;
@@ -257,16 +203,17 @@ static int sparse_merge_bufs(
     /* first check our buffer */
     int send_rank = -1;
     while (sendoffset < sendsize && send_rank == -1) {
-      packet = (exv_packet_header*) ((char*)sendbuf + sendoffset);
-      int current_rank = packet->rank;
-      int relative_rank = (current_rank - rank + ranks) % ranks;
+      packet = (exi_packet_header*) ((char*)sendbuf + sendoffset);
+      int dest_rank = packet->rank;
+      int dest_msgs = packet->msgs;
+      int relative_rank = (dest_rank - rank + ranks) % ranks;
       int relative_id = (relative_rank / factor) % degree;
       if (relative_id == 0) {
         /* we kept the data for this rank during this round, so consider this rank for merging */
-        send_rank = current_rank;
+        send_rank = dest_rank;
       } else {
         /* we sent this data for this rank to someone else during this step, so skip it */
-        sendoffset += sizeof(exv_packet_header) + packet->payload;
+        sendoffset += sizeof(exi_packet_header) + dest_msgs * elem_size;
       }
     }
     if (send_rank != -1) {
@@ -276,10 +223,10 @@ static int sparse_merge_bufs(
     /* now check each of our receive buffers */
     for (i = 0; i < nrecv; i++) {
       if (recvoffsets[i] < recvsizes[i]) {
-        packet = (exv_packet_header*) ((char*)recvbufs[i] + recvoffsets[i]);
-        int current_rank = packet->rank;
-        if (current_rank < min_rank || min_rank == -1) {
-          min_rank = current_rank;
+        packet = (exi_packet_header*) ((char*)recvbufs[i] + recvoffsets[i]);
+        int dest_rank = packet->rank;
+        if (dest_rank < min_rank || min_rank == -1) {
+          min_rank = dest_rank;
         }
       }
     }
@@ -287,48 +234,44 @@ static int sparse_merge_bufs(
     /* if we found a rank, merge the data in the new_data buffer */
     if (min_rank != -1) {
       /* initialize our packet header to include merged data */
-      exv_packet_header* merge_packet = (exv_packet_header*) ((char*)mergebuf + mergeoffset);
+      exi_packet_header* merge_packet = (exi_packet_header*) ((char*)mergebuf + mergeoffset);
       merge_packet->rank    = min_rank;
       merge_packet->msgs    = 0;
-      merge_packet->bytes   = 0;
-      merge_packet->payload = 0;
-      mergeoffset += sizeof(exv_packet_header);
+      mergeoffset += sizeof(exi_packet_header);
       int payload_count = 0;
 
       /* merge data from the send buffer if the rank matches the min rank */
       if (sendoffset < sendsize) { 
-        packet = (exv_packet_header*) ((char*)sendbuf + sendoffset);
-        int current_rank = packet->rank;
-        if (current_rank == min_rank) {
-          int payload = packet->payload;
-          merge_packet->msgs    += packet->msgs;
-          merge_packet->bytes   += packet->bytes;
-          merge_packet->payload += payload;
+        packet = (exi_packet_header*) ((char*)sendbuf + sendoffset);
+        int dest_rank = packet->rank;
+        if (dest_rank == min_rank) {
+          int dest_msgs = packet->msgs;
+          merge_packet->msgs += dest_msgs;
 
-          payload_bufs[payload_count]  = ((char*)sendbuf + sendoffset + sizeof(exv_packet_header));
+          int payload = dest_msgs * elem_size;
+          payload_bufs[payload_count]  = ((char*)sendbuf + sendoffset + sizeof(exi_packet_header));
           payload_sizes[payload_count] = payload;
           payload_count++;
 
-          sendoffset += sizeof(exv_packet_header) + payload;
+          sendoffset += sizeof(exi_packet_header) + payload;
         }
       }
 
       /* merge data from each receive buffer that matches the min rank */
       for (i = 0; i < nrecv; i++) {
         if (recvoffsets[i] < recvsizes[i]) {
-          packet = (exv_packet_header*) ((char*)recvbufs[i] + recvoffsets[i]);
-          int current_rank = packet->rank;
-          if (current_rank == min_rank) {
-            int payload = packet->payload;
-            merge_packet->msgs    += packet->msgs;
-            merge_packet->bytes   += packet->bytes;
-            merge_packet->payload += payload;
+          packet = (exi_packet_header*) ((char*)recvbufs[i] + recvoffsets[i]);
+          int dest_rank = packet->rank;
+          if (dest_rank == min_rank) {
+            int dest_msgs = packet->msgs;
+            merge_packet->msgs  += dest_msgs;
 
-            payload_bufs[payload_count]  = (char*)recvbufs[i] + recvoffsets[i] + sizeof(exv_packet_header);
+            int payload = dest_msgs * elem_size;
+            payload_bufs[payload_count]  = (char*)recvbufs[i] + recvoffsets[i] + sizeof(exi_packet_header);
             payload_sizes[payload_count] = payload;
             payload_count++;
 
-            recvoffsets[i] += sizeof(exv_packet_header) + payload;
+            recvoffsets[i] += sizeof(exi_packet_header) + payload;
           }
         }
       }
@@ -351,7 +294,7 @@ static int sparse_merge_bufs(
 }
 
 /* execute Bruck's index algorithm to exchange data */
-static int sparse_brucks(void** inoutbuf, int* inoutbuf_size, int degree, MPI_Comm comm)
+static int sparse_brucks(void** inoutbuf, int* inoutbuf_size, int elem_size, int degree, MPI_Comm comm)
 {
   int i;
   int rc = MPI_SUCCESS;
@@ -476,9 +419,9 @@ static int sparse_brucks(void** inoutbuf, int* inoutbuf_size, int degree, MPI_Co
     /* pack our send messages and count number of bytes in each */
     int buf_offset = 0;
     while (buf_offset < buf_size) {
-      exv_packet_header* packet = (exv_packet_header*) ((char*)buf + buf_offset);
+      exi_packet_header* packet = (exi_packet_header*) ((char*)buf + buf_offset);
       int dest_rank = packet->rank;
-      int dest_size = sizeof(exv_packet_header) + packet->payload;
+      int dest_size = sizeof(exi_packet_header) + packet->msgs * elem_size;
       int relative_rank = (dest_rank - rank + ranks) % ranks;
       int relative_id = (relative_rank / factor) % degree;
       if (relative_id > 0) {
@@ -568,7 +511,7 @@ static int sparse_brucks(void** inoutbuf, int* inoutbuf_size, int degree, MPI_Co
     int mergebuf_size = 0;
     sparse_merge_bufs(
       rank, ranks, factor, degree,
-      buf, buf_size, num_messages, recv_bufs, recv_bytes,
+      elem_size, buf, buf_size, num_messages, recv_bufs, recv_bytes,
       recv_offs, payload_bufs, payload_sizes,
       mergebuf, &mergebuf_size
     );
@@ -607,9 +550,10 @@ static int sparse_brucks(void** inoutbuf, int* inoutbuf_size, int degree, MPI_Co
 }
 
 static int sparse_unpack(
-  void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
-  void** inbuf, int* inbuf_size, MPI_Request* inreq[], int* innreq, MPI_Comm comm, DSDE_Handle* handle)
+  void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint recvcount, MPI_Aint* rdispls[], MPI_Datatype recvtype,
+  void** inbuf, int* inbuf_size, int* inelem_size, MPI_Comm comm, DSDE_Handle* handle)
 {
+  int i;
   int rc = MPI_SUCCESS;
 
   *handle = DSDE_HANDLE_NULL;
@@ -617,17 +561,16 @@ static int sparse_unpack(
   /* record input parameters */
   void* buf        = *inbuf;
   int buf_size     = *inbuf_size;
-  MPI_Request* req = *inreq;
-  int nreq         = *innreq;
+  int elem_size    = *inelem_size;
 
-  /* check whether we received any data */
+  /* check whether we have any data to unpack */
   if (buf_size > 0) {
     /* get our rank in comm */
     int rank;
     MPI_Comm_rank(comm, &rank);
 
     /* read packet header and check that it arrived at correct rank */
-    exv_packet_header* packet = (exv_packet_header*) buf;
+    exi_packet_header* packet = (exi_packet_header*) buf;
     int dest_rank = packet->rank;
     if (dest_rank != rank) {
       /* error, received data for a different rank (shouldn't happen) */
@@ -644,48 +587,19 @@ static int sparse_unpack(
       MPI_Aint recvlb, recvextent;
       MPI_Type_get_extent(recvtype, &recvlb, &recvextent);
 
-      /* allocate space to hold offset into data buffer for each message */
-      MPI_Aint* data_offsets = (MPI_Aint*) malloc(msgs * sizeof(MPI_Aint));
-      if (data_offsets == NULL) {
-        /* error, received data for a different rank (shouldn't happen) */
-        sparse_abort(1, "Failed to allocate memory to hold offsets @ %s:%d",
-          __FILE__, __LINE__
-        );
-      }
+      /* based on count and recvtype, figure out how much memory we need to hold this message */
+      MPI_Aint true_lb, true_extent;
+      MPI_Datatype contig;
+      MPI_Type_contiguous(recvcount, recvtype, &contig);
+      MPI_Type_get_true_extent(contig, &true_lb, &true_extent);
+      MPI_Type_free(&contig);
 
       /* compute total amount of memory we need to allocate to unpack/receive all message data */
-      int index = 0;
-      MPI_Aint unpacked_size = 0;
-      int buf_offset = sizeof(exv_packet_header);
-      while (buf_offset < buf_size) {
-        /* record offset for the current message */
-        data_offsets[index] = unpacked_size;
-        index++;
-
-        /* get count for this message */
-        exv_elem_header* elem = (exv_elem_header*) ((char*)buf + buf_offset);
-        int elem_count = elem->count;
-        buf_offset += sizeof(exv_elem_header);
-
-        /* based on count and recvtype, figure out how much memory we need to hold this message */
-        MPI_Aint true_lb, true_extent;
-        MPI_Datatype contig;
-        MPI_Type_contiguous(elem_count, recvtype, &contig);
-        MPI_Type_get_true_extent(contig, &true_lb, &true_extent);
-        MPI_Type_free(&contig);
-
-        /* add to our total */
-        unpacked_size += true_extent;
-
-        /* increment our offset past inlined data if any */
-        if (elem->type == ELEM_INLINED) {
-          buf_offset += elem->size;
-        }
-      }
+      MPI_Aint unpacked_size = msgs * true_extent;
 
       /* compute and allocate space receive all data */
       void* ret_buf = NULL;
-      int ret_buf_size = sizeof(DSDE_Free_fn) + (sizeof(int) + 2 * sizeof(MPI_Aint)) * msgs + (int) unpacked_size;
+      int ret_buf_size = sizeof(DSDE_Free_fn) + (sizeof(int) + sizeof(MPI_Aint)) * msgs + (int) unpacked_size;
       if (ret_buf_size > 0) {
         ret_buf = (void*) malloc(ret_buf_size);
         if (ret_buf == NULL) {
@@ -697,7 +611,6 @@ static int sparse_unpack(
 
       /* we'll copy these values to our output parameters before returning */
       int*      rank_list  = NULL;
-      MPI_Aint* count_list = NULL;
       MPI_Aint* disp_list  = NULL;
       void*     data_buf   = NULL;
 
@@ -711,9 +624,6 @@ static int sparse_unpack(
         rank_list = (int*) ret_buf_tmp;
         ret_buf_tmp += sizeof(int) * msgs;
 
-        count_list = (MPI_Aint*) ret_buf_tmp;
-        ret_buf_tmp += sizeof(MPI_Aint) * msgs;
-
         disp_list = (MPI_Aint*) ret_buf_tmp;
         ret_buf_tmp += sizeof(MPI_Aint) * msgs;
       }
@@ -723,40 +633,29 @@ static int sparse_unpack(
       }
 
       /* extract contents of each element */
-      index = 0;
-      buf_offset = sizeof(exv_packet_header);
+      int index = 0;
+      int buf_offset = sizeof(exi_packet_header);
       while (buf_offset < buf_size) {
         /* get pointer to header of the next element */
         /* read the source rank, element type, and message size */
-        exv_elem_header* elem = (exv_elem_header*) ((char*)buf + buf_offset);
-        int elem_rank  = elem->rank;
-        int elem_type  = elem->type;
-        int elem_size  = elem->size;
-        int elem_count = elem->count;
-        buf_offset += sizeof(exv_elem_header);
+        exi_elem_header* elem = (exi_elem_header*) ((char*)buf + buf_offset);
+        int elem_rank = elem->rank;
+        buf_offset += sizeof(exi_elem_header);
 
         /* record rank and count in output arrays */
         rank_list[index]  = elem_rank;
-        count_list[index] = elem_count;
 
         /* TODO: we may have alignment problems here */
         /* TODO: need to be careful not to divide by 0 */
-        disp_list[index] = data_offsets[index] / recvextent;
+        disp_list[index] = (index * elem_size) / recvextent;
 
         /* process the element according to its type */
-        void* ptr = (char*)data_buf + data_offsets[index];
-        if (elem_type == ELEM_INLINED) {
-          /* the message data is inlined, copy the data to our receive buffer */
-          int position;
-          MPI_Unpack((char*)buf + buf_offset, elem_size, &position, ptr, elem_count, recvtype, comm);
-          buf_offset += position;
-        } else if (elem_type == ELEM_DIRECT) {
-          /* receive the data directly into our buffer */
-          MPI_Status status;
-          MPI_Recv(ptr, elem_count, recvtype, elem_rank, ELEM_DIRECT, comm, &status);
-        } else {
-          /* TODO: ERROR */
-        }
+        void* ptr = (char*)data_buf + index * elem_size;
+
+        /* the message data is inlined, copy the data to our receive buffer */
+        int position;
+        MPI_Unpack((char*)buf + buf_offset, elem_size, &position, ptr, recvcount, recvtype, comm);
+        buf_offset += position;
 
         index++;
       }
@@ -765,21 +664,9 @@ static int sparse_unpack(
       *recvbuf    = data_buf;
       *rrankcount = msgs;
       *rranks     = rank_list;
-      *recvcounts = count_list;
       *rdispls    = disp_list;
       *handle     = ret_buf;
-
-      /* free off our temporary array of offsets */
-      if (data_offsets != NULL) {
-        free(data_offsets);
-        data_offsets = NULL;
-      }
     }
-  }
-
-  /* wait for any direct issends to complete */
-  if (nreq > 0) {
-    MPI_Waitall(nreq, req, MPI_STATUSES_IGNORE);
   }
 
   /* free off the result buffer (allocated in sparse_pack) */
@@ -788,26 +675,18 @@ static int sparse_unpack(
     buf = NULL;
   }
 
-  /* free off the request array (allocated in sparse_pack) */
-  if (req != NULL) {
-    free(req);
-    req = NULL;
-  }
-
   /* update output parameters */
   *inbuf      = buf;
   *inbuf_size = 0;
-  *inreq      = req;
-  *innreq     = 0;
 
   return rc;
 }
 
 /* used to efficiently implement an alltoallv where each process only sends to a handful of other processes,
  * uses the indexing algorithm by Jehoshua Bruck et al, IEEE TPDS, Nov. 97 */
-int DSDE_Exchangev_brucks(
-    void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint  sendcounts[], MPI_Aint  sdispls[], MPI_Datatype sendtype,
-    void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
+int DSDE_Exchange_brucks_inline(
+    void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint sendcount, MPI_Aint  sdispls[], MPI_Datatype sendtype,
+    void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint recvcount, MPI_Aint* rdispls[], MPI_Datatype recvtype,
     MPI_Comm comm, DSDE_Handle* handle)
 {
   int i;
@@ -819,32 +698,30 @@ int DSDE_Exchangev_brucks(
   *recvbuf    = NULL;
   *rrankcount = 0;
   *rranks     = NULL;
-  *recvcounts = NULL;
   *rdispls    = NULL;
   *handle     = DSDE_HANDLE_NULL;
 
   /* variables to track temporaries between sparse_pack/unpack calls */
   void* buf        = NULL;
   int buf_size     = 0;
-  MPI_Request* req = NULL;
-  int nreq         = 0;
+  int elem_size    = 0;
 
   /* pack our send data into buf,
-   * which is allocated and returned by sparse_pack as well as an array of requests for any direct sends */
+   * which is allocated and returned by sparse_pack */
   sparse_pack(
-    sendbuf, srankcount, sranks, sendcounts, sdispls, sendtype,
-    &buf, &buf_size, &req, &nreq, comm
+    sendbuf, srankcount, sranks, sendcount, sdispls, sendtype,
+    &buf, &buf_size, &elem_size, comm
   );
 
   /* execute Bruck's index algorithm to exchange data */
-  sparse_brucks(&buf, &buf_size, sparse_network_degree, comm);
+  sparse_brucks(&buf, &buf_size, elem_size, sparse_network_degree, comm);
 
   /* unpack data into user receive buffers,
    * frees buf and request array which were allocated in sparse_pack,
    * and allocate handle to be returned to caller */
   sparse_unpack(
-    recvbuf, rrankcount, rranks, recvcounts, rdispls, recvtype,
-    &buf, &buf_size, &req, &nreq, comm, handle
+    recvbuf, rrankcount, rranks, recvcount, rdispls, recvtype,
+    &buf, &buf_size, &elem_size, comm, handle
   );
 
   return rc;

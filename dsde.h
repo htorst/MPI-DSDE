@@ -49,6 +49,23 @@ int DSDE_Memcpy(
  * DSDE_Free(&handle);
  */
 int DSDE_Exchange(
+  const void*    sendbuf,       /* IN  - starting address of send buffer (choice) */
+  int            srankcount,    /* IN  - number of dest. processes (non-negative integer) */
+  const int      sranks[],      /* IN  - non-negative integer array (of length srankcount) of dest. processes */
+  MPI_Aint       sendcount,     /* IN  - non-negative integer array (of length srankcount) of number of elements to send to sranks[i] */
+  const MPI_Aint sdispls[],     /* IN  - integer array (of length srankcount) of displs to send to dests[i] */
+  MPI_Datatype   sendtype,      /* IN  - data type of send buffer elements (handle) */
+  void**         recvbuf,       /* OUT - starting address of receive buffer, allocated by lib (choice) */
+  int*           rrankcount,    /* OUT - number of source processes (non-negative integer) */
+  int*           rranks[],      /* OUT - non-negative integer array (of length rrankcount) of source processes */
+  MPI_Aint       recvcount,     /* IN  - non-negative integer array (of length rrankcount) of number of elements recevied from rranks[i] */
+  MPI_Aint*      rdispls[],     /* OUT - integer array (of length rrankcount) of displs of data received from rranks[i] */
+  MPI_Datatype   recvtype,      /* IN  - data type of receive buffer elements (handle) */
+  MPI_Comm       comm,          /* IN  - communicator (handle) */
+  DSDE_Handle*   handle         /* OUT - DSDE resource (handle) */
+);
+
+int DSDE_Exchangev(
   void*        sendbuf,       /* IN  - starting address of send buffer (choice) */
   int          srankcount,    /* IN  - number of dest. processes (non-negative integer) */
   int          sranks[],      /* IN  - non-negative integer array (of length srankcount) of dest. processes */
@@ -77,16 +94,16 @@ int DSDE_Free(
 /* TODO: may be useful to change flag to count to record number of processes
  * contributing data */
 int DSDE_Reduce_scatter_block(
-  void*        sendbuf,    /* IN  - starting address of send buffer (choice) */
-  int          srankcount, /* IN  - number of dest. processes (non-negative integer) */
-  int          sranks[],   /* IN  - integer array (of length srankcount) of dest. processes */
-  MPI_Aint     sdispls[],  /* IN  - integer array (of length srankcount) of displs to send to dests[i] */
-  int*         flag,       /* OUT - true if data in recvbuf is valid (logical) */
-  void*        recvbuf,    /* OUT - starting address of receive buffer (choice) */
-  MPI_Aint     recvcount,  /* IN  - element count per block (non-negative integer) */
-  MPI_Datatype datatype,   /* IN  - data type of elements of send and receive buffers (handle) */
-  MPI_Op       op,         /* IN  - operation (handle) */
-  MPI_Comm     comm        /* IN  - communicator (handle) */
+  const void*    sendbuf,    /* IN  - starting address of send buffer (choice) */
+  int            srankcount, /* IN  - number of dest. processes (non-negative integer) */
+  const int      sranks[],   /* IN  - integer array (of length srankcount) of dest. processes */
+  const MPI_Aint sdispls[],  /* IN  - integer array (of length srankcount) of displs to send to dests[i] */
+  int*           flag,       /* OUT - true if data in recvbuf is valid (logical) */
+  void*          recvbuf,    /* OUT - starting address of receive buffer (choice) */
+  MPI_Aint       count,      /* IN  - element count per block (non-negative integer) */
+  MPI_Datatype   datatype,   /* IN  - data type of elements of send and receive buffers (handle) */
+  MPI_Op         op,         /* IN  - operation (handle) */
+  MPI_Comm       comm        /* IN  - communicator (handle) */
 );
 
 /* -----------------------------------------
