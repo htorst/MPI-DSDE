@@ -20,6 +20,13 @@
 #define ELEM_DIRECT  (1)
 #define ELEM_INLINED (2)
 
+/* function to print error messages, just throw away for now */
+#define sparse_abort
+
+/* TODO: make these more dynamic */
+static int sparse_network_inline = 512;
+static int sparse_network_degree = 2;
+
 /* In the Brucks implementation, we pack and forward data through intermediate ranks.
  * An individual message is packed into an element, and then a list of elements is
  * packed into a packet and forwarded on to the destination.  If the message data is
@@ -32,13 +39,6 @@
  *
  * where the packet header consists of:
  */
-
-/* function to print error messages, just throw away for now */
-#define sparse_abort
-
-/* TODO: make these more dynamic */
-static int sparse_network_inline = 512;
-static int sparse_network_degree = 2;
 
 typedef struct {
   int rank;    /* rank of final destination */
@@ -119,8 +119,7 @@ static int sparse_pack(
     /* sort ranks in ascending order */
     qsort(sort_list, srankcount, 2 * sizeof(int), &int_cmp_fn);
 
-    /* allocate space to pack our send data: for each message that we might send,
-     * allocate a packet header, an element header, and space to pack its data */
+    /* for each message we might send, allocate packet header, element header, and space to pack its data */
     int buf_maxsize = (sizeof(exv_packet_header) + sizeof(exv_elem_header)) * srankcount + max_packed;
     buf = malloc(buf_maxsize);
     if (buf == NULL) {
@@ -776,13 +775,13 @@ static int sparse_unpack(
     MPI_Waitall(nreq, req, MPI_STATUSES_IGNORE);
   }
 
-  /* free off the result buffer */
+  /* free off the result buffer (allocated in sparse_pack) */
   if (buf != NULL) {
     free(buf);
     buf = NULL;
   }
 
-  /* free off the request array */
+  /* free off the request array (allocated in sparse_pack) */
   if (req != NULL) {
     free(req);
     req = NULL;
