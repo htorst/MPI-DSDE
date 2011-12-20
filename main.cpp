@@ -20,7 +20,7 @@ int main() {
   int p; MPI_Comm_size(MPI_COMM_WORLD, &p);
   int r; MPI_Comm_rank(MPI_COMM_WORLD, &r);
   if(p < 4) {
-    MPI_Abort(MPI_COMM_WORLD, 1);
+//    MPI_Abort(MPI_COMM_WORLD, 1);
   }
 
   // initialize send structure
@@ -29,16 +29,16 @@ int main() {
   sbuf.push_back(r);
   scounts.push_back(1);
   scounts.push_back(1);
-  scounts.push_back(1);
+//  scounts.push_back(1);
   sdispls.push_back(0);
   sdispls.push_back(1);
-  sdispls.push_back(2);
+//  sdispls.push_back(2);
 
   sranks.push_back((r+1)%p);
   sranks.push_back((r+2)%p);
-  sranks.push_back((r+3)%p);
+//  sranks.push_back((r+3)%p);
 
-  DSDE_Exchange_ibarrier(&sbuf[0], sranks.size(), &sranks[0], &scounts[0], &sdispls[0], MPI_INT,
+  DSDE_Exchangev_brucks(&sbuf[0], sranks.size(), &sranks[0], &scounts[0], &sdispls[0], MPI_INT,
                          (void**)&rbuf, &rrankcount, &rranks, &rcounts, &rdispls, MPI_INT, MPI_COMM_WORLD, &handle);
 
   if(2==2) {
@@ -48,6 +48,8 @@ int main() {
 
     }
   }
+
+  DSDE_Free(&handle);
 
   MPI_Finalize();
 }

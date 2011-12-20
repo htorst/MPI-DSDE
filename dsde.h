@@ -89,6 +89,16 @@ int DSDE_Reduce_scatter_block(
   MPI_Comm     comm        /* IN  - communicator (handle) */
 );
 
+/* -----------------------------------------
+ * Move this section to an internal header not exposed to user
+ * ----------------------------------------- */
+
+/* function pointer to a DSDE_Free implementation that takes a pointer to a handle */
+typedef int(*DSDE_Free_fn)(DSDE_Handle*);
+
+/* assumes that handle just points to one big block of memory that must be freed */
+int DSDE_Free_single(DSDE_Handle* handle);
+
 /* this may be temp */
 int DSDE_Exchange_alltoall(
   void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint  sendcounts[], MPI_Aint  sdispls[], MPI_Datatype sendtype,
@@ -106,4 +116,10 @@ int DSDE_Exchange_ibarrier(
   void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint  sendcounts[], MPI_Aint  sdispls[], MPI_Datatype sendtype,
   void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
   MPI_Comm comm, DSDE_Handle* handle);
+
+int DSDE_Exchangev_brucks(
+  void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint  sendcounts[], MPI_Aint  sdispls[], MPI_Datatype sendtype,
+  void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
+  MPI_Comm comm, DSDE_Handle* handle);
+
 } /* extern "C" */
