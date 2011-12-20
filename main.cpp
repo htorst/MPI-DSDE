@@ -24,19 +24,19 @@ int main() {
   }
 
   // initialize send structure
-  sbuf.push_back(r);
-  sbuf.push_back(r);
-  sbuf.push_back(r);
+  sbuf.push_back(r+100);
+  sbuf.push_back(r+100);
+  sbuf.push_back(r+100);
   scounts.push_back(1);
   scounts.push_back(1);
-//  scounts.push_back(1);
+  scounts.push_back(1);
   sdispls.push_back(0);
   sdispls.push_back(1);
-//  sdispls.push_back(2);
+  sdispls.push_back(2);
 
-  sranks.push_back((r+1)%p);
-  sranks.push_back((r+2)%p);
-//  sranks.push_back((r+3)%p);
+  sranks.push_back((r-1+p)%p);
+  sranks.push_back((r+2+p)%p);
+  sranks.push_back((r-3+p)%p);
 
   DSDE_Exchangev_brucks(&sbuf[0], sranks.size(), &sranks[0], &scounts[0], &sdispls[0], MPI_INT,
                          (void**)&rbuf, &rrankcount, &rranks, &rcounts, &rdispls, MPI_INT, MPI_COMM_WORLD, &handle);
@@ -50,6 +50,20 @@ int main() {
   }
 
   DSDE_Free(&handle);
+
+  int result_flag;
+  int result;
+  DSDE_Reduce_scatter_block_brucks(
+    &sbuf[0], sranks.size(), &sranks[0], &sdispls[0],
+    &result_flag, &result,
+    1, MPI_INT, MPI_SUM, MPI_COMM_WORLD, 2
+  );
+
+  if (result_flag) {
+    printf("[%i] result = %d\n", r, result);
+  } else {
+    printf("[%i] no result\n", r);
+  }
 
   MPI_Finalize();
 }

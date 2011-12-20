@@ -44,7 +44,7 @@ typedef struct {
 } exi_elem_header;
 
 /* qsort integer compare (using first four bytes of structure) */
-int int_cmp_fn(const void* a, const void* b)
+static int int_cmp_fn(const void* a, const void* b)
 {
   return (int) (*(int*)a - *(int*)b);
 }
@@ -653,7 +653,7 @@ static int sparse_unpack(
         void* ptr = (char*)data_buf + index * elem_size;
 
         /* the message data is inlined, copy the data to our receive buffer */
-        int position;
+        int position = 0;
         MPI_Unpack((char*)buf + buf_offset, elem_size, &position, ptr, recvcount, recvtype, comm);
         buf_offset += position;
 

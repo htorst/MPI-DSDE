@@ -139,4 +139,9 @@ int DSDE_Exchangev_brucks(
   void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
   MPI_Comm comm, DSDE_Handle* handle);
 
+int DSDE_Reduce_scatter_block_brucks(
+    const void* sendbuf, int srankcount, const int sranks[], const MPI_Aint sdispls[],
+    int* flag, void* recvbuf, MPI_Aint count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm,
+    int degree);
+
 } /* extern "C" */

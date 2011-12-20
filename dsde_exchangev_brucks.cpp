@@ -57,7 +57,7 @@ typedef struct {
 } exv_elem_header;
 
 /* qsort integer compare (using first four bytes of structure) */
-int int_cmp_fn(const void* a, const void* b)
+static int int_cmp_fn(const void* a, const void* b)
 {
   return (int) (*(int*)a - *(int*)b);
 }
@@ -747,7 +747,7 @@ static int sparse_unpack(
         void* ptr = (char*)data_buf + data_offsets[index];
         if (elem_type == ELEM_INLINED) {
           /* the message data is inlined, copy the data to our receive buffer */
-          int position;
+          int position = 0;
           MPI_Unpack((char*)buf + buf_offset, elem_size, &position, ptr, elem_count, recvtype, comm);
           buf_offset += position;
         } else if (elem_type == ELEM_DIRECT) {
