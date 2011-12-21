@@ -1,7 +1,3 @@
-/* Code for homogeneous systems */
-
-/* Executes reduction, inlines all data so works best with small messages */
-
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -13,24 +9,41 @@
 #include <math.h>
 #include "dsde.h"
 
+/* For homogeneous systems
+ *  - Destination ranks in send arrays may be provided in any order
+ *  - The same destination array can not be listed more than once
+ *  - MPI_PROC_NULL is a valid destination
+ *  - Any datatype is supported
+ *  - Any reduction op is supported 
+ *
+ * Executes reduction, inlines all data so works best with small messages
+ *
+ * In the Brucks implementation, we pack and reduce data through intermediate ranks.
+ *
+ * A tunable parameter in this algorithm is the "degree", which must be >= 2.
+ * This algorithm runs in ceil(log_degree(N)) rounds, wherein each round, each
+ * process sends and receives up to (degree-1) messages.
+ *
+ * Each message consists of a list of packets, where each packet contains a header
+ * and data.  The header is just an integer that lists the destination rank, and the
+ * data is the current reduction result for that destination.
+ *
+ * So a message looks like the following:
+ *
+ * <dest_rank_1> <reduction_data_1> : <dest_rank_2> <reduction_data_2> : ...
+ * 
+ * During each step of the algorithm, each process sends and receives lists from other
+ * ranks.  It merges each incoming list into a list of data it has yet to send out.
+ * During this merge, if more than one list has data for a given rank, these items are
+ * reduced to a single item by applying the reduction operation on the data elements.
+ * The lists are kept sorted by increasing destination rank so that merges are efficient.
+ */
+
 /* function to print error messages, just throw away for now */
 #define sparse_abort
 
-/* In the Brucks implementation, we pack and forward data through intermediate ranks.
- * An individual message is packed into an element, and then a list of elements is
- * packed into a packet and forwarded on to the destination.  If the message data is
- * small enough, it is inlined into the element.  Otherwise, only the element header
- * is sent and the data is sent direct as a separate message.
- *
- * The packet format looks like the following:
- *
- * <packet_header> : <element_header> [element_data], <element_header> [element data], ...
- *
- * where the packet header consists of:
- */
-
 typedef struct {
-  int rank;    /* rank of final destination */
+  int rank; /* rank of final destination */
 } rsbi_packet_header;
 
 /* qsort integer compare (using first four bytes of structure) */
@@ -39,23 +52,17 @@ static int int_cmp_fn(const void* a, const void* b)
   return (int) (*(int*)a - *(int*)b);
 }
 
-/* pack send data into buf, which is allocated and returned */
+/* pack send data into list, which is allocated and returned in outbuf */
 static int sparse_pack(
-  const void* sendbuf, int srankcount, const int sranks[], const MPI_Aint sdispls[], MPI_Aint count, MPI_Datatype datatype,
-  void** outbuf, int* outbuf_size, MPI_Aint* outextent, MPI_Comm comm)
+  const void* sendbuf, int srankcount, const int sranks[], const MPI_Aint sdispls[],
+  MPI_Aint count, MPI_Datatype datatype, MPI_Aint true_lb, MPI_Aint true_extent,
+  void** outbuf, int* outbuf_size, MPI_Comm comm)
 {
   int i;
 
   /* we'll copy these values over to the output parameters before returning */
   void* buf      = NULL;
   int buf_offset = 0;
-
-  /* compute memory size of element */
-  MPI_Aint true_lb, true_extent;
-  MPI_Datatype contig;
-  MPI_Type_contiguous(count, datatype, &contig);
-  MPI_Type_get_true_extent(contig, &true_lb, &true_extent);
-  MPI_Type_free(&contig);
 
   /* prepare our initial data for sending */
   if (srankcount > 0) {
@@ -120,7 +127,7 @@ static int sparse_pack(
         buf_offset += sizeof(rsbi_packet_header);
 
         /* pack our inlined data */
-        DSDE_Memcpy((char*)buf + buf_offset, count, datatype, sendptr, count, datatype);
+        DSDE_Memcpy((char*)buf + buf_offset - true_lb, count, datatype, sendptr, count, datatype);
         buf_offset += true_extent;
       } else if (dest_rank != MPI_PROC_NULL) {
         /* error, rank out of range */
@@ -140,7 +147,6 @@ static int sparse_pack(
   /* update output parameters */
   *outbuf       = buf;
   *outbuf_size  = buf_offset;
-  *outextent    = true_extent;
 
   return MPI_SUCCESS;
 }
@@ -151,7 +157,7 @@ static int sparse_pack(
 static int sparse_merge_bufs(
   int rank, int ranks, int factor, int degree, /* position within brucks algorithm */
   const void* sendbuf, int sendsize, int nrecv, void* recvbufs[], const int recvsizes[], /* send buf and array of recv bufs */
-  MPI_Aint extent, MPI_Aint count, MPI_Datatype datatype, MPI_Op op, /* parameters needed for reduction */
+  MPI_Aint count, MPI_Datatype datatype, MPI_Aint true_lb, MPI_Aint true_extent, MPI_Op op, /* parameters needed for reduction */
   int recvoffsets[], void* payload_bufs[], /* scratch space */
   void* mergebuf, int* out_mergesize) /* output buffer containing merged data */
 {
@@ -166,11 +172,11 @@ static int sparse_merge_bufs(
     recvoffsets[i] = 0;
   }
 
+  /* TODO: execute this merge as a k-way merge with min-heap */
+
   /* merge received data with data we've yet to send */
   int remaining = 1;
   while (remaining) {
-    /* TODO: execute this merge as a k-way merge with min-heap */
-
     /* scan through and identify lowest rank among our buffer and receive buffers */
     int min_rank = -1;
 
@@ -186,7 +192,7 @@ static int sparse_merge_bufs(
         send_rank = dest_rank;
       } else {
         /* we sent this data for this rank to someone else during this step, so skip it */
-        sendoffset += sizeof(rsbi_packet_header) + extent;
+        sendoffset += sizeof(rsbi_packet_header) + true_extent;
       }
     }
     if (send_rank != -1) {
@@ -217,10 +223,10 @@ static int sparse_merge_bufs(
         packet = (rsbi_packet_header*) ((char*)sendbuf + sendoffset);
         int dest_rank = packet->rank;
         if (dest_rank == min_rank) {
-          payload_bufs[payload_count] = ((char*)sendbuf + sendoffset + sizeof(rsbi_packet_header));
+          payload_bufs[payload_count] = (char*)sendbuf + sendoffset + sizeof(rsbi_packet_header) - true_lb;
           payload_count++;
 
-          sendoffset += sizeof(rsbi_packet_header) + extent;
+          sendoffset += sizeof(rsbi_packet_header) + true_extent;
         }
       }
 
@@ -230,22 +236,22 @@ static int sparse_merge_bufs(
           packet = (rsbi_packet_header*) ((char*)recvbufs[i] + recvoffsets[i]);
           int dest_rank = packet->rank;
           if (dest_rank == min_rank) {
-            payload_bufs[payload_count] = (char*)recvbufs[i] + recvoffsets[i] + sizeof(rsbi_packet_header);
+            payload_bufs[payload_count] = (char*)recvbufs[i] + recvoffsets[i] + sizeof(rsbi_packet_header) - true_lb;
             payload_count++;
 
-            recvoffsets[i] += sizeof(rsbi_packet_header) + extent;
+            recvoffsets[i] += sizeof(rsbi_packet_header) + true_extent;
           }
         }
       }
 
       /* merge payloads into a single payload */
       if (payload_count > 0) {
-        void* reducebuf = (char*)mergebuf + mergeoffset;
+        void* reducebuf = (char*)mergebuf + mergeoffset - true_lb;
         DSDE_Memcpy(reducebuf, count, datatype, payload_bufs[0], count, datatype);
         for (i = 1; i < payload_count; i++) {
           MPI_Reduce_local(payload_bufs[i], reducebuf, count, datatype, op);
         }
-        mergeoffset += extent;
+        mergeoffset += true_extent;
       }
     } else {
       /* found no rank on this scan, so we must be done */
@@ -253,7 +259,7 @@ static int sparse_merge_bufs(
     }
   }
 
-  /* update outpu parameters */
+  /* update output parameters, we just need to tell caller how big the merge buffer is */
   *out_mergesize = mergeoffset;
 
   return rc;
@@ -262,7 +268,7 @@ static int sparse_merge_bufs(
 /* execute Bruck's index algorithm to exchange data */
 static int sparse_brucks(
   void** inoutbuf, int* inoutbuf_size,
-  MPI_Aint extent, MPI_Aint count, MPI_Datatype datatype, MPI_Op op,
+  MPI_Aint count, MPI_Datatype datatype, MPI_Aint true_lb, MPI_Aint true_extent, MPI_Op op,
   int degree, MPI_Comm comm)
 {
   int i;
@@ -278,6 +284,9 @@ static int sparse_brucks(
 
   /* compute the maximum number of messages we'll send in each round */
   int max_messages = degree - 1;
+
+  /* TODO: for a fixed degree on a given communicator, many of these values won't change,
+   * so an optimization would be to cache this on comm after we compute it the first time */
 
   /* send and destination rank arrays, size arrays, and MPI request and status objects */
   int* dst         = NULL;   /* array of ranks this process will send to during a given round */
@@ -385,7 +394,7 @@ static int sparse_brucks(
     while (buf_offset < buf_size) {
       rsbi_packet_header* packet = (rsbi_packet_header*) ((char*)buf + buf_offset);
       int dest_rank = packet->rank;
-      int dest_size = sizeof(rsbi_packet_header) + extent;
+      int dest_size = sizeof(rsbi_packet_header) + true_extent;
       int relative_rank = (dest_rank - rank + ranks) % ranks;
       int relative_id = (relative_rank / factor) % degree;
       if (relative_id > 0) {
@@ -476,7 +485,7 @@ static int sparse_brucks(
     sparse_merge_bufs(
       rank, ranks, factor, degree,
       buf, buf_size, num_messages, recv_bufs, recv_bytes,
-      extent, count, datatype, op,
+      count, datatype, true_lb, true_extent, op,
       recv_offs, payload_bufs,
       mergebuf, &mergebuf_size
     );
@@ -514,8 +523,10 @@ static int sparse_brucks(
   return 0;
 }
 
+/* unpack our final list into user receive buffer and free memory holding list */
 static int sparse_unpack(
-  int* flag, void* recvbuf, MPI_Aint count, MPI_Datatype datatype,
+  int* flag, void* recvbuf,
+  MPI_Aint count, MPI_Datatype datatype, MPI_Aint true_lb, MPI_Aint true_extent,
   void** inbuf, int* inbuf_size, MPI_Comm comm)
 {
   int i;
@@ -541,7 +552,7 @@ static int sparse_unpack(
     }
 
     /* copy data to user's receive buffer and set flag to indicate that it's valid */
-    void* ptr = (char*)buf + sizeof(rsbi_packet_header);
+    void* ptr = (char*)buf + sizeof(rsbi_packet_header) - true_lb;
     DSDE_Memcpy(recvbuf, count, datatype, ptr, count, datatype);
     *flag = 1;
   } else {
@@ -582,35 +593,44 @@ int DSDE_Reduce_scatter_block_brucks(
     return !MPI_SUCCESS;
   }
 
-  /* variables to track temporaries between sparse_pack/unpack calls */
-  void* buf        = NULL;
-  int buf_size     = 0;
-  MPI_Aint extent  = 0;
+  /* get true lower bound and true extent of count consecutive copies of datatype */
+  MPI_Aint true_lb, true_extent;
+  MPI_Datatype contig;
+  MPI_Type_contiguous(count, datatype, &contig);
+  MPI_Type_get_true_extent(contig, &true_lb, &true_extent);
+  MPI_Type_free(&contig);
 
-  /* pack our send data into buf,
+  /* variables to track temporaries between sparse_pack/unpack calls */
+  void* buf    = NULL;
+  int buf_size = 0;
+
+  /* pack our send data into list,
    * which is allocated and returned by sparse_pack */
   tmp_rc = sparse_pack(
-    sendbuf, srankcount, sranks, sdispls, count, datatype,
-    &buf, &buf_size, &extent, comm
+    sendbuf, srankcount, sranks, sdispls,
+    count, datatype, true_lb, true_extent,
+    &buf, &buf_size, comm
   );
   if (rc == MPI_SUCCESS) {
     rc = tmp_rc;
   }
 
-  /* execute Bruck's index algorithm to exchange data */
+  /* execute Bruck's index algorithm to exchange data and merge lists */
   tmp_rc = sparse_brucks(
     &buf, &buf_size,
-    extent, count, datatype, op,
+    count, datatype, true_lb, true_extent, op,
     degree, comm
   );
   if (rc == MPI_SUCCESS) {
     rc = tmp_rc;
   }
 
-  /* unpack data into user receive buffers,
-   * frees buf and request array which were allocated in sparse_pack,
-   * and allocate handle to be returned to caller */
-  tmp_rc = sparse_unpack(flag, recvbuf, count, datatype, &buf, &buf_size, comm);
+  /* unpack final list into user receive buffer, and free list */
+  tmp_rc = sparse_unpack(
+    flag, recvbuf,
+    count, datatype, true_lb, true_extent,
+    &buf, &buf_size, comm
+  );
   if (rc == MPI_SUCCESS) {
     rc = tmp_rc;
   }

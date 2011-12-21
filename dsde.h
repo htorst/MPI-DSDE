@@ -23,7 +23,7 @@ typedef void* DSDE_Handle;
 /* we define a NULL handle as DSDE_HANDLE_NULL */
 extern DSDE_Handle DSDE_HANDLE_NULL;
 
-/* Copies data from one buffer to another on the same process using MPI
+/* Copies data from src buffer to dst buffer on the same process using MPI
  * datatypes.  The number of basic elements specified by dstcount and
  * dsttype must be equal to the number of elements specified by srccount
  * and srctype, and both dsttype and srctype must be committed.

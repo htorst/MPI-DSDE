@@ -51,6 +51,7 @@ int main() {
 
   DSDE_Free(&handle);
 
+  /* execute a sparse reduce scatter operation */
   int result_flag;
   int result;
   DSDE_Reduce_scatter_block_brucks(
