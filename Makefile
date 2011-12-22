@@ -12,7 +12,8 @@ OBJS= \
   dsde_exchange_accumulate.o \
   dsde_exchangev_brucks.o \
   dsde_exchange_brucks_inline.o \
-  dsde_reduce_scatter_block_brucks.o
+  dsde_reduce_scatter_block_brucks.o \
+  dsde_reduce_scatter_block_hbrucks.o
 
 all: libdsde.a main
 

@@ -8,6 +8,7 @@
 #include <vector>
 
 int main() {
+  int i;
 
   MPI_Init(NULL, NULL);
 
@@ -25,18 +26,21 @@ int main() {
 
   // initialize send structure
   sbuf.push_back(r+100);
+  sbuf.push_back(r+1000);
   sbuf.push_back(r+100);
+  sbuf.push_back(r+1000);
   sbuf.push_back(r+100);
-  scounts.push_back(1);
-  scounts.push_back(1);
-  scounts.push_back(1);
+  sbuf.push_back(r+1000);
+  scounts.push_back(2);
+  scounts.push_back(2);
+  scounts.push_back(2);
   sdispls.push_back(0);
-  sdispls.push_back(1);
   sdispls.push_back(2);
+  sdispls.push_back(4);
 
   sranks.push_back((r-1+p)%p);
   sranks.push_back((r+2+p)%p);
-  sranks.push_back((r-3+p)%p);
+//  sranks.push_back((r-3+p)%p);
 
   DSDE_Exchangev_brucks(&sbuf[0], sranks.size(), &sranks[0], &scounts[0], &sdispls[0], MPI_INT,
                          (void**)&rbuf, &rrankcount, &rranks, &rcounts, &rdispls, MPI_INT, MPI_COMM_WORLD, &handle);
@@ -44,8 +48,10 @@ int main() {
   if(2==2) {
     printf("[%i] received from %i ranks\n", r, rrankcount);
     for(int i=0; i<rrankcount; ++i) {
-      printf("[%i] received %i elements at offset %i (%i) from %i\n", r, rcounts[i], rdispls[i], rbuf[i], rranks[i]);
-
+    for (int j=0; j < rcounts[i]; j++) {
+      int index = rdispls[i] + j;
+      printf("[%i] received %i elements starting at offset %i, offset %d = (%i) from %i\n", r, rcounts[i], rdispls[i], index, rbuf[index], rranks[i]);
+    }
     }
   }
 
@@ -53,15 +59,17 @@ int main() {
 
   /* execute a sparse reduce scatter operation */
   int result_flag;
-  int result;
-  DSDE_Reduce_scatter_block_brucks(
+  std::vector<int> result(scounts[0]);
+  DSDE_Reduce_scatter_block_hbrucks(
     &sbuf[0], sranks.size(), &sranks[0], &sdispls[0],
-    &result_flag, &result,
-    1, MPI_INT, MPI_SUM, MPI_COMM_WORLD, 2
+    &result_flag, &result[0],
+    scounts[0], MPI_INT, MPI_SUM, MPI_COMM_WORLD, 2
   );
 
   if (result_flag) {
-    printf("[%i] result = %d\n", r, result);
+    for (i=0; i < scounts[0]; i++) {
+      printf("[%i] result[%d]=%d\n", r, i, result[i]);
+    }
   } else {
     printf("[%i] no result\n", r);
   }

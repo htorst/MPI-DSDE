@@ -17,12 +17,12 @@
 /* Packs and reduces data through intermediate ranks using k-way dissemination algorithm.
  *
  * Features
- *  - Portable to hetergeneous systems (however only tested on homogeneous systems)
  *  - Destination ranks in send arrays may be provided in any order
  *  - MPI_PROC_NULL is a valid destination
  *  - Any (portable) datatype is supported
  *  - Any reduction op is supported 
  * Limitations
+ *  - Not portable to hetergeneous systems (only supports homogeneous systems)
  *  - Inlines reduction data so only efficient with small data
  *  - If too many messages / ranks, then intermediate ranks could be overwhelmed with
  *    too much incoming data
@@ -284,7 +284,7 @@ static int sparse_merge_bufs(
 static int sparse_brucks(
   void** inoutbuf, int* inoutbuf_size,
   MPI_Aint count, MPI_Datatype datatype, MPI_Aint true_lb, MPI_Aint true_extent, MPI_Op op,
-  MPI_Datatype packed, int degree, MPI_Comm comm)
+  int degree, MPI_Comm comm)
 {
   int i;
 
@@ -300,18 +300,14 @@ static int sparse_brucks(
   /* compute the maximum number of messages we'll send in each round */
   int max_messages = degree - 1;
 
-  /* get true extent of a packed type (should include leading int and count consecutive copies of datatype) */
-  MPI_Aint packed_lb, packed_extent;
-  MPI_Type_get_true_extent(packed, &packed_lb, &packed_extent);
-
   /* TODO: for a fixed degree on a given communicator, many of these values won't change,
    * so an optimization would be to cache this on comm after we compute it the first time */
 
   /* send and destination rank arrays, size arrays, and MPI request and status objects */
   int* dst         = NULL;   /* array of ranks this process will send to during a given round */
   int* src         = NULL;   /* array of ranks this process will receive from in a given round */
-  int* send_counts = NULL;   /* array of number of bytes for each rank this process will send to */
-  int* recv_counts = NULL;   /* array of number of bytes this process will receive from each src rank */
+  int* send_bytes  = NULL;   /* array of number of bytes for each rank this process will send to */
+  int* recv_bytes  = NULL;   /* array of number of bytes this process will receive from each src rank */
   int* recv_offs   = NULL;   /* array to hold offset into each of the receive buffers for the merge step */
   void** send_bufs = NULL;   /* array of pointers to send buffer locations */
   void** recv_bufs = NULL;   /* array of pointers to receive buffer locations */
@@ -342,10 +338,10 @@ static int sparse_brucks(
     src = (int*) scratch_temp;
     scratch_temp += sizeof(int) * max_messages;
 
-    send_counts = (int*) scratch_temp;
+    send_bytes = (int*) scratch_temp;
     scratch_temp += sizeof(int) * max_messages;
 
-    recv_counts = (int*) scratch_temp;
+    recv_bytes = (int*) scratch_temp;
     scratch_temp += sizeof(int) * max_messages;
 
     recv_offs = (int*) scratch_temp;
@@ -411,7 +407,7 @@ static int sparse_brucks(
       send_bufs[i] = (char*)tmp_send + i * buf_size;
 
       /* initialize our send sizes */
-      send_counts[i] = 0;
+      send_bytes[i] = 0;
     }
 
     /* pack our send messages and count number of bytes in each */
@@ -420,6 +416,7 @@ static int sparse_brucks(
       /* get the rank this packet is headed to */
       rsbi_packet_header* packet = (rsbi_packet_header*) ((char*)buf + buf_offset);
       int dest_rank = packet->rank;
+      int dest_size = sizeof(rsbi_packet_header) + true_extent;
 
       /* compute the destination rank relative to our own rank */
       int relative_rank = dest_rank - rank;
@@ -430,25 +427,25 @@ static int sparse_brucks(
       int relative_id = (relative_rank / factor) % degree;
       if (relative_id > 0) {
         int index = relative_id - 1;
-        memcpy((char*)send_bufs[index] + send_counts[index] * packed_extent, (char*)buf + buf_offset, packed_extent);
-        send_counts[index]++;
+        memcpy((char*)send_bufs[index] + send_bytes[index], (char*)buf + buf_offset, dest_size);
+        send_bytes[index] += dest_size;
       }
-      buf_offset += packed_extent;
+      buf_offset += dest_size;
     }
 
     /* exchange number of bytes for this round */
     for (i = 0; i < num_messages; i++) {
-      MPI_Irecv(&recv_counts[i], 1, MPI_INT, src[i], 0, comm, &req[i]);
+      MPI_Irecv(&recv_bytes[i], 1, MPI_INT, src[i], 0, comm, &req[i]);
     }
     for (i = 0; i < num_messages; i++) {
-      MPI_Isend(&send_counts[i], 1, MPI_INT, dst[i], 0, comm, &req[num_messages + i]);
+      MPI_Isend(&send_bytes[i], 1, MPI_INT, dst[i], 0, comm, &req[num_messages + i]);
     }
 
     /* eagerly send our non-zero messages (assumed to be relatively small messages) */
     int req2_count = 0;
     for (i = 0; i < num_messages; i++) {
-      if (send_counts[i] > 0) {
-        MPI_Isend(send_bufs[i], send_counts[i], packed, dst[i], 0, comm, &req2[req2_count]);
+      if (send_bytes[i] > 0) {
+        MPI_Isend(send_bufs[i], send_bytes[i], MPI_BYTE, dst[i], 0, comm, &req2[req2_count]);
         req2_count++;
       }
     }
@@ -461,7 +458,7 @@ static int sparse_brucks(
     /* count total number of bytes we'll receive in this round */
     int tmp_recv_size = 0;
     for (i = 0; i < num_messages; i++) {
-      tmp_recv_size += recv_counts[i] * packed_extent;
+      tmp_recv_size += recv_bytes[i];
     }
 
     /* allocate buffer to hold all incoming bytes */
@@ -479,16 +476,16 @@ static int sparse_brucks(
     int tmp_recv_offset = 0;
     for (i = 0; i < num_messages; i++) {
       recv_bufs[i] = NULL;
-      if (tmp_recv_size > 0 && recv_counts[i] > 0) {
+      if (tmp_recv_size > 0 && recv_bytes[i] > 0) {
         recv_bufs[i] = (char*)tmp_recv + tmp_recv_offset;
-        tmp_recv_offset += recv_counts[i] * packed_extent;
+        tmp_recv_offset += recv_bytes[i];
       }
     }
 
     /* finally, recv each non-zero message, and wait on sends and receives of non-zero messages */
     for (i = 0; i < num_messages; i++) {
-      if (recv_counts[i] > 0) {
-        MPI_Irecv(recv_bufs[i], recv_counts[i], packed, src[i], 0, comm, &req2[req2_count]);
+      if (recv_bytes[i] > 0) {
+        MPI_Irecv(recv_bufs[i], recv_bytes[i], MPI_BYTE, src[i], 0, comm, &req2[req2_count]);
         req2_count++;
       }
     }
@@ -511,16 +508,11 @@ static int sparse_brucks(
       );
     }
 
-    /* convert recv counts to bytes for merge step */
-    for (i = 0; i < num_messages; i++) {
-      recv_counts[i] *= packed_extent;
-    }
-
     /* merge data that we didn't send with data we just received */
     int mergebuf_size = 0;
     sparse_merge_bufs(
       rank, ranks, factor, degree,
-      buf, buf_size, num_messages, recv_bufs, recv_counts,
+      buf, buf_size, num_messages, recv_bufs, recv_bytes,
       count, datatype, true_lb, true_extent, op,
       recv_offs, payload_bufs,
       mergebuf, &mergebuf_size
@@ -609,8 +601,7 @@ static int sparse_unpack(
   return MPI_SUCCESS;
 }
 
-/* Packs and reduces data through intermediate ranks using k-way dissemination algorithm. */
-int DSDE_Reduce_scatter_block_brucks(
+int DSDE_Reduce_scatter_block_hbrucks(
     const void* sendbuf, int srankcount, const int sranks[], const MPI_Aint sdispls[],
     int* flag, void* recvbuf, MPI_Aint count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm,
     int degree)
@@ -628,37 +619,12 @@ int DSDE_Reduce_scatter_block_brucks(
     return !MPI_SUCCESS;
   }
 
-  /* build a new type that is count consecutive entries of user's type */
+  /* get true lower bound and true extent of count consecutive copies of datatype */
+  MPI_Aint true_lb, true_extent;
   MPI_Datatype contig;
   MPI_Type_contiguous(count, datatype, &contig);
-
-  /* get lower bound and extent of count consecutive copies of datatype */
-  MPI_Aint contig_lb, contig_extent;
-  MPI_Type_get_extent(contig, &contig_lb, &contig_extent);
-
-  /* get true lower bound and true extent of count consecutive copies of datatype */
-  MPI_Aint contig_true_lb, contig_true_extent;
-  MPI_Type_get_true_extent(contig, &contig_true_lb, &contig_true_extent);
-
-  /* create a new type that represents count copies with true extent from true lower
-   * bound, keep user-defined lower bound */
-  MPI_Datatype contig_resized;
-  MPI_Type_create_resized(contig, contig_lb, contig_true_extent, &contig_resized);
-
-  /* build the datatype representing our packed messsage: <integer> <contig_resized>
-   * need to be sure to look out for any leading holes in contig type */
-  MPI_Datatype packed;
-  int blocks[2] = {1, 1};
-  MPI_Aint displs[2];
-  MPI_Datatype types[2];
-  MPI_Aint int_true_lb, int_true_extent;
-  MPI_Type_get_true_extent(MPI_INT, &int_true_lb, &int_true_extent);
-  displs[0] = 0;
-  displs[1] = int_true_extent - contig_true_lb;
-  types[0] = MPI_INT;
-  types[1] = contig_resized;
-  MPI_Type_create_struct(2, blocks, displs, types, &packed);
-  MPI_Type_commit(&packed);
+  MPI_Type_get_true_extent(contig, &true_lb, &true_extent);
+  MPI_Type_free(&contig);
 
   /* variables to track temporaries between sparse_pack/unpack calls */
   void* buf    = NULL;
@@ -668,7 +634,7 @@ int DSDE_Reduce_scatter_block_brucks(
    * which is allocated and returned by sparse_pack */
   tmp_rc = sparse_pack(
     sendbuf, srankcount, sranks, sdispls,
-    count, datatype, contig_true_lb, contig_true_extent,
+    count, datatype, true_lb, true_extent,
     &buf, &buf_size, comm
   );
   if (rc == MPI_SUCCESS) {
@@ -678,8 +644,8 @@ int DSDE_Reduce_scatter_block_brucks(
   /* execute Bruck's index algorithm to exchange data and merge lists */
   tmp_rc = sparse_brucks(
     &buf, &buf_size,
-    count, datatype, contig_true_lb, contig_true_extent, op,
-    packed, degree, comm
+    count, datatype, true_lb, true_extent, op,
+    degree, comm
   );
   if (rc == MPI_SUCCESS) {
     rc = tmp_rc;
@@ -688,19 +654,12 @@ int DSDE_Reduce_scatter_block_brucks(
   /* unpack final list into user receive buffer, and free list */
   tmp_rc = sparse_unpack(
     flag, recvbuf,
-    count, datatype, contig_true_lb, contig_true_extent,
+    count, datatype, true_lb, true_extent,
     &buf, &buf_size, comm
   );
   if (rc == MPI_SUCCESS) {
     rc = tmp_rc;
   }
-
-  /* TODO: cache these as attributes on the datatype as an optimization */
-
-  /* free off our temporary types */
-  MPI_Type_free(&contig_resized);
-  MPI_Type_free(&contig);
-  MPI_Type_free(&packed);
 
   return rc;
 }

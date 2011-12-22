@@ -143,5 +143,9 @@ int DSDE_Reduce_scatter_block_brucks(
     const void* sendbuf, int srankcount, const int sranks[], const MPI_Aint sdispls[],
     int* flag, void* recvbuf, MPI_Aint count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm,
     int degree);
+int DSDE_Reduce_scatter_block_hbrucks(
+    const void* sendbuf, int srankcount, const int sranks[], const MPI_Aint sdispls[],
+    int* flag, void* recvbuf, MPI_Aint count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm,
+    int degree);
 
 } /* extern "C" */
