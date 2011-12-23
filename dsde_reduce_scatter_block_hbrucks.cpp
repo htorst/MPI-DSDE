@@ -12,7 +12,8 @@
 #include <sys/time.h>
 #include "mpi.h"
 #include <math.h>
-#include "dsde.h"
+
+#include "dsde_internal.h"
 
 /* Packs and reduces data through intermediate ranks using k-way dissemination algorithm.
  *

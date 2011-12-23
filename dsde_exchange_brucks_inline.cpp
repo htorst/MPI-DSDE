@@ -11,13 +11,11 @@
 #include <sys/time.h>
 #include "mpi.h"
 #include <math.h>
-#include "dsde.h"
+
+#include "dsde_internal.h"
 
 /* function to print error messages, just throw away for now */
 #define sparse_abort
-
-/* TODO: make these more dynamic */
-static int sparse_network_degree = 2;
 
 /* In the Brucks implementation, we pack and forward data through intermediate ranks.
  * An individual message is packed into an element, and then a list of elements is
@@ -51,7 +49,7 @@ static int int_cmp_fn(const void* a, const void* b)
 
 /* pack send data into buf, which is allocated and returned */
 static int sparse_pack(
-  void* sendbuf, int srankcount, int sranks[], MPI_Aint sendcount, MPI_Aint sdispls[], MPI_Datatype sendtype,
+  const void* sendbuf, int srankcount, const int sranks[], MPI_Aint sendcount, const MPI_Aint sdispls[], MPI_Datatype sendtype,
   void** outbuf, int* outbuf_size, int* outelem_size, MPI_Comm comm)
 {
   int i;
@@ -685,11 +683,12 @@ static int sparse_unpack(
 /* used to efficiently implement an alltoallv where each process only sends to a handful of other processes,
  * uses the indexing algorithm by Jehoshua Bruck et al, IEEE TPDS, Nov. 97 */
 int DSDE_Exchange_brucks_inline(
-    void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint sendcount, MPI_Aint  sdispls[], MPI_Datatype sendtype,
-    void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint recvcount, MPI_Aint* rdispls[], MPI_Datatype recvtype,
-    MPI_Comm comm, DSDE_Handle* handle)
+    const void*  sendbuf, int  srankcount, const int  sranks[], MPI_Aint sendcount, const MPI_Aint  sdispls[], MPI_Datatype sendtype,
+    void**       recvbuf, int* rrankcount, int*       rranks[], MPI_Aint recvcount, MPI_Aint*       rdispls[], MPI_Datatype recvtype,
+    MPI_Comm comm, DSDE_Handle* handle,
+    int degree)
 {
-  int i;
+  int i, tmp_rc;
   int rc = MPI_SUCCESS;
 
   /* TODO: current implementation limits one message per destination from each source */
@@ -708,21 +707,30 @@ int DSDE_Exchange_brucks_inline(
 
   /* pack our send data into buf,
    * which is allocated and returned by sparse_pack */
-  sparse_pack(
+  tmp_rc = sparse_pack(
     sendbuf, srankcount, sranks, sendcount, sdispls, sendtype,
     &buf, &buf_size, &elem_size, comm
   );
+  if (rc == MPI_SUCCESS) {
+    rc = tmp_rc;
+  }
 
   /* execute Bruck's index algorithm to exchange data */
-  sparse_brucks(&buf, &buf_size, elem_size, sparse_network_degree, comm);
+  tmp_rc = sparse_brucks(&buf, &buf_size, elem_size, degree, comm);
+  if (rc == MPI_SUCCESS) {
+    rc = tmp_rc;
+  }
 
   /* unpack data into user receive buffers,
    * frees buf and request array which were allocated in sparse_pack,
    * and allocate handle to be returned to caller */
-  sparse_unpack(
+  tmp_rc = sparse_unpack(
     recvbuf, rrankcount, rranks, recvcount, rdispls, recvtype,
     &buf, &buf_size, &elem_size, comm, handle
   );
+  if (rc == MPI_SUCCESS) {
+    rc = tmp_rc;
+  }
 
   return rc;
 }

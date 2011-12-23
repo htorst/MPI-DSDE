@@ -7,6 +7,9 @@
 #include "dsde.h"
 #include <vector>
 
+// real apps should just include dsde.h
+#include "dsde_internal.h"
+
 int main() {
   int i;
 
@@ -42,8 +45,10 @@ int main() {
   sranks.push_back((r+2+p)%p);
 //  sranks.push_back((r-3+p)%p);
 
+  int degree = 2;
+
   DSDE_Exchangev_brucks(&sbuf[0], sranks.size(), &sranks[0], &scounts[0], &sdispls[0], MPI_INT,
-                         (void**)&rbuf, &rrankcount, &rranks, &rcounts, &rdispls, MPI_INT, MPI_COMM_WORLD, &handle);
+                         (void**)&rbuf, &rrankcount, &rranks, &rcounts, &rdispls, MPI_INT, MPI_COMM_WORLD, &handle, degree);
 
   if(2==2) {
     printf("[%i] received from %i ranks\n", r, rrankcount);
@@ -63,7 +68,7 @@ int main() {
   DSDE_Reduce_scatter_block_hbrucks(
     &sbuf[0], sranks.size(), &sranks[0], &sdispls[0],
     &result_flag, &result[0],
-    scounts[0], MPI_INT, MPI_SUM, MPI_COMM_WORLD, 2
+    scounts[0], MPI_INT, MPI_SUM, MPI_COMM_WORLD, degree
   );
 
   if (result_flag) {

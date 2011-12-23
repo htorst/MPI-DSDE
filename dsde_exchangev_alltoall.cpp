@@ -4,11 +4,11 @@
  *  Created on: Dec 8, 2011
  *      Author: htor
  */
-#include "dsde.h"
+#include "dsde_internal.h"
 
-int DSDE_Exchange_alltoall(
-  void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint  sendcounts[], MPI_Aint  sdispls[], MPI_Datatype sendtype,
-  void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
+int DSDE_Exchangev_alltoall(
+  const void*  sendbuf, int  srankcount, const int  sranks[], const MPI_Aint  sendcounts[], const MPI_Aint  sdispls[], MPI_Datatype sendtype,
+  void**       recvbuf, int* rrankcount, int*       rranks[], MPI_Aint*       recvcounts[], MPI_Aint*       rdispls[], MPI_Datatype recvtype,
   MPI_Comm comm, DSDE_Handle* handle) {
 
   /* TODO: actually, the following should all be centralized: */

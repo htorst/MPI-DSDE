@@ -7,11 +7,11 @@ LDFLAGS=
 #  dsde_exchange_ibarrier.o
 OBJS= \
   dsde.o \
-  dsde_exchange_alltoall.o \
-  dsde_exchange_reduce_scatter.o \
-  dsde_exchange_accumulate.o \
-  dsde_exchangev_brucks.o \
   dsde_exchange_brucks_inline.o \
+  dsde_exchangev_alltoall.o \
+  dsde_exchangev_reduce_scatter.o \
+  dsde_exchangev_accumulate.o \
+  dsde_exchangev_brucks.o \
   dsde_reduce_scatter_block_brucks.o \
   dsde_reduce_scatter_block_hbrucks.o
 
@@ -28,4 +28,4 @@ main: main.cpp dsde.o *h libdsde.a
 	$(MPICXX) $(CFLAGS) $< libdsde.a -o $@ $(LDFLAGS)
 
 clean:
-	rm -f *.o main
+	rm -f *.o main libdsde.*

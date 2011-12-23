@@ -15,7 +15,8 @@
 #include <sys/time.h>
 #include "mpi.h"
 #include <math.h>
-#include "dsde.h"
+
+#include "dsde_internal.h"
 
 #define ELEM_DIRECT  (1)
 #define ELEM_INLINED (2)
@@ -25,7 +26,6 @@
 
 /* TODO: make these more dynamic */
 static int sparse_network_inline = 512;
-static int sparse_network_degree = 2;
 
 /* In the Brucks implementation, we pack and forward data through intermediate ranks.
  * An individual message is packed into an element, and then a list of elements is
@@ -64,7 +64,7 @@ static int int_cmp_fn(const void* a, const void* b)
 
 /* pack send data into buf, which is allocated and returned as well as an array of requests for any direct sends */
 static int sparse_pack(
-  void* sendbuf, int srankcount, int sranks[], MPI_Aint sendcounts[], MPI_Aint sdispls[], MPI_Datatype sendtype,
+  const void* sendbuf, int srankcount, const int sranks[], const MPI_Aint sendcounts[], const MPI_Aint sdispls[], MPI_Datatype sendtype,
   void** outbuf, int* outbuf_size, MPI_Request* outreq[], int* out_nreq, MPI_Comm comm)
 {
   int i;
@@ -806,9 +806,9 @@ static int sparse_unpack(
 /* used to efficiently implement an alltoallv where each process only sends to a handful of other processes,
  * uses the indexing algorithm by Jehoshua Bruck et al, IEEE TPDS, Nov. 97 */
 int DSDE_Exchangev_brucks(
-    void*  sendbuf, int  srankcount, int  sranks[], MPI_Aint  sendcounts[], MPI_Aint  sdispls[], MPI_Datatype sendtype,
-    void** recvbuf, int* rrankcount, int* rranks[], MPI_Aint* recvcounts[], MPI_Aint* rdispls[], MPI_Datatype recvtype,
-    MPI_Comm comm, DSDE_Handle* handle)
+    const void*  sendbuf, int  srankcount, const int  sranks[], const MPI_Aint  sendcounts[], const MPI_Aint  sdispls[], MPI_Datatype sendtype,
+    void**       recvbuf, int* rrankcount, int*       rranks[], MPI_Aint*       recvcounts[], MPI_Aint*       rdispls[], MPI_Datatype recvtype,
+    MPI_Comm comm, DSDE_Handle* handle, int degree)
 {
   int i;
   int rc = MPI_SUCCESS;
@@ -837,7 +837,7 @@ int DSDE_Exchangev_brucks(
   );
 
   /* execute Bruck's index algorithm to exchange data */
-  sparse_brucks(&buf, &buf_size, sparse_network_degree, comm);
+  sparse_brucks(&buf, &buf_size, degree, comm);
 
   /* unpack data into user receive buffers,
    * frees buf and request array which were allocated in sparse_pack,
