@@ -86,6 +86,7 @@ int DSDE_Exchangev(
 
   /* for now, just invoke something */
   /* TODO: set degree based on message size, smaller messages may benefit from higher degree values */
+#if 0
   int degree = 2;
   rc = DSDE_Exchangev_brucks(
     sendbuf, srankcount, sranks, sendcounts, sdispls, sendtype,
@@ -93,7 +94,10 @@ int DSDE_Exchangev(
     comm, handle,
     degree
   );
-
+#else
+  rc = DSDE_Exchangev_alltoall(sendbuf, srankcount, sranks, sendcounts, sdispls, sendtype,
+    recvbuf, rrankcount, rranks, recvcounts, rdispls, recvtype, comm, handle);
+#endif
   return rc;
 }
 
