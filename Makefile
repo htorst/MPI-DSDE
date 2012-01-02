@@ -4,9 +4,9 @@ CFLAGS=-g -O0 -I$(LIBNBC_HOME)/include
 #LDFLAGS=-L$(LIBNBC_HOME)/lib -lnbc
 LDFLAGS=
 
-#  dsde_exchange_ibarrier.o
 OBJS= \
   dsde.o \
+  dsde_exchangev_ibarrier.o \
   dsde_exchange_brucks_inline.o \
   dsde_exchangev_alltoall.o \
   dsde_exchangev_reduce_scatter.o \

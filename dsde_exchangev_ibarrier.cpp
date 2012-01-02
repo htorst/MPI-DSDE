@@ -6,6 +6,14 @@
  */
 #include "dsde_internal.h"
 
+typedef struct {
+  DSDE_Free_fn free_fn; ///< the free function for exchangev_alltoall
+  char *rbuf; ///< the receive buffer
+  std::vector<int> *lrranks; ///< local rranks
+  std::vector<MPI_Aint> *lrdispls; ///< local rdispls
+  std::vector<MPI_Aint> *lrsizes; ///< local rsizes
+} handle_t;
+
 #ifdef HAVE_DCMF
 #include <dcmf_globalcollectives.h>
 #else
@@ -46,12 +54,26 @@ static void prepare_mpi3nbc(MPI_Comm comm) {
 #endif
 }
 
+static int free(void **handlev) {
+  handle_t *handle = (handle_t*)(*handlev);
+  free(handle->rbuf);
+  delete(handle->lrdispls);
+  delete(handle->lrranks);
+  delete(handle->lrsizes);
+  free(handle);
+  *handlev = DSDE_HANDLE_NULL;
+}
+
 /* here we get only the processes that we receive from so that we have
  * to probe/malloc/receive the messages */
 int DSDE_Exchangev_ibarrier(
   const void*  sendbuf, int  srankcount, const int  sranks[], const MPI_Aint  sendcounts[], const MPI_Aint  sdispls[], MPI_Datatype sendtype,
   void**       recvbuf, int* rrankcount, int*       rranks[], MPI_Aint*       recvcounts[], MPI_Aint*       rdispls[], MPI_Datatype recvtype,
   MPI_Comm comm, DSDE_Handle* handle) {
+
+  handle_t *state_data=(handle_t*)malloc(sizeof(handle_t)); ///< this struct contains the free function and pointers to all data that is returned
+  state_data->free_fn = free;
+  *handle = (DSDE_Handle*)state_data;
 
   /* TODO: actually, the following should all be centralized: */
   int res = 0, recvsize;
@@ -84,11 +106,11 @@ int DSDE_Exchangev_ibarrier(
     MPI_Issend(sbuf, sendcounts[i], sendtype, sranks[i], nbctag, libcomm, &sreqs[i]);
   }
 
-  std::vector<int> *lrranks = new std::vector<int>; // local rranks
-  std::vector<MPI_Aint> *lrdispls = new std::vector<MPI_Aint>; // local rdispls
-  std::vector<MPI_Aint> *lrsizes = new std::vector<MPI_Aint>; // local rsizes
+  state_data->lrranks = new std::vector<int>; // local rranks
+  state_data->lrdispls = new std::vector<MPI_Aint>; // local rdispls
+  state_data->lrsizes = new std::vector<MPI_Aint>; // local rsizes
   int cursize = 0; // size of receive buffer in elements
-  char *rbuf=NULL; // local receive buffer pointer
+  state_data->rbuf=NULL; // local receive buffer pointer
   *rrankcount = 0; // input argument - number of receive ranks
   std::vector<MPI_Request> rreqs;
 
@@ -104,16 +126,16 @@ int DSDE_Exchangev_ibarrier(
     if(flag) {
       int count;
       MPI_Get_count(&stat, recvtype, &count);
-      lrranks->push_back(stat.MPI_SOURCE);
-      lrdispls->push_back(cursize);
-      lrsizes->push_back(count);
+      state_data->lrranks->push_back(stat.MPI_SOURCE);
+      state_data->lrdispls->push_back(cursize);
+      state_data->lrsizes->push_back(count);
       (*rrankcount)++;
-      cursize =  lrdispls->back() + count;
-      rbuf = (char*)realloc(rbuf, cursize);
+      cursize =  state_data->lrdispls->back() + count;
+      state_data->rbuf = (char*)realloc(state_data->rbuf, cursize);
       rreqs.resize(rreqs.size()+1);
 
       printf("[%i] receiving %i elements from %i\n", r, count, stat.MPI_SOURCE);
-      MPI_Irecv(rbuf + lrdispls->back()*rcvext, count, recvtype, stat.MPI_SOURCE, nbctag, libcomm, &rreqs.back());
+      MPI_Irecv(state_data->rbuf + state_data->lrdispls->back()*rcvext, count, recvtype, stat.MPI_SOURCE, nbctag, libcomm, &rreqs.back());
     }
 
     if(barr_act) {
@@ -140,10 +162,10 @@ int DSDE_Exchangev_ibarrier(
   }
   MPI_Waitall(rreqs.size(), &rreqs[0], MPI_STATUSES_IGNORE);
 
-  *recvbuf = rbuf;
-  *rranks = &(*lrranks)[0];
-  *rdispls = &(*lrdispls)[0];
-  *recvcounts = &(*lrsizes)[0];
+  *recvbuf = state_data->rbuf;
+  *rranks = &(*state_data->lrranks)[0];
+  *rdispls = &(*state_data->lrdispls)[0];
+  *recvcounts = &(*state_data->lrsizes)[0];
 
   return MPI_SUCCESS;
 }
