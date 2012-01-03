@@ -6,11 +6,7 @@
  */
 #include "dsde_internal.h"
 
-// TODO: this is horrible and not thread-safe, this should be hung off the comm attribute!
-static int mpi2os_recvs;
-static char mpi2os_initialized=0;
-static MPI_Info info;
-static MPI_Win win;
+static int gkeyval=MPI_KEYVAL_INVALID;
 
 typedef struct {
   DSDE_Free_fn free_fn; ///< the free function for exchangev_alltoall
@@ -20,16 +16,37 @@ typedef struct {
   std::vector<MPI_Aint> *lrsizes; ///< local rsizes
 } handle_t;
 
-static void prepare_mpi2os(MPI_Comm comm) {
-  MPI_Info_create(&info);
-  MPI_Info_set(info, (char*)std::string("no_locks").c_str(), (char*)std::string("true").c_str());
-  MPI_Win_create(&mpi2os_recvs, sizeof(int), 1, info, comm, &win);
+typedef struct {
+  int mpi2os_recvs; ///< the counter to be increased with accumulate
+  MPI_Info info; ///< no_locks info
+  MPI_Win win; ///< the MPI window for the counter
+} DSDE_Comminfo;
+
+
+static DSDE_Comminfo* prepare_mpi2os(MPI_Comm comm) {
+  DSDE_Comminfo *comminfo = (DSDE_Comminfo*)malloc(sizeof(DSDE_Comminfo));
+  MPI_Info_create(&comminfo->info);
+  MPI_Info_set(comminfo->info, (char*)std::string("no_locks").c_str(), (char*)std::string("true").c_str());
+  MPI_Win_create(&comminfo->mpi2os_recvs, sizeof(int), 1, comminfo->info, comm, &comminfo->win);
+  /* put the new attribute to the comm */
+  int res = MPI_Attr_put(comm, gkeyval, comminfo);
+  if((MPI_SUCCESS != res)) { printf("Error in MPI_Attr_put() (%i)\n", res); return NULL; }
+  return comminfo;
 }
 
-/* TODO: this is never called :-( -- should we have a DSDE_Finalize? I'd rater not call this in every DSDE_Free */
-static void free_mpi2os() {
-  MPI_Win_free(&win);
-  MPI_Info_free(&info);
+static int DSDE_Key_delete(MPI_Comm comm, int keyval, void *attribute_val, void *extra_state) {
+  DSDE_Comminfo *comminfo;
+
+  if(keyval == gkeyval) {
+    comminfo=(DSDE_Comminfo*)attribute_val;
+    MPI_Win_free(&comminfo->win);
+    MPI_Info_free(&comminfo->info);
+    free((void*)comminfo);
+  } else {
+    printf("Got wrong keyval!(%i)\n", keyval);
+  }
+
+  return MPI_SUCCESS;
 }
 
 static int free(void **handlev) {
@@ -52,6 +69,7 @@ int DSDE_Exchangev_accumulate(
   state_data->free_fn = free;
   *handle = (DSDE_Handle*)state_data;
 
+
   /* TODO: actually, the following should all be centralized: */
   int res = 0, recvsize;
   MPI_Aint sndext, rcvext;
@@ -71,8 +89,18 @@ int DSDE_Exchangev_accumulate(
   }
   /* end of centralization */
 
-  if(!mpi2os_initialized) {
-    prepare_mpi2os(libcomm);
+  if(MPI_KEYVAL_INVALID == gkeyval) {
+    res = MPI_Keyval_create(MPI_COMM_NULL_COPY_FN, DSDE_Key_delete, &(gkeyval), NULL);
+    if((MPI_SUCCESS != res)) { printf("Error in MPI_Keyval_create() (%i)\n", res); return res; }
+  }
+
+  DSDE_Comminfo *comminfo;
+  int flag;
+  res = MPI_Attr_get(comm, gkeyval, &comminfo, &flag);
+  if((MPI_SUCCESS != res)) { printf("Error in MPI_Attr_get() (%i)\n", res); return res; }
+
+  if (!flag) { /* we have to create a new one */
+    comminfo = prepare_mpi2os(libcomm);
   }
 
   std::vector<MPI_Request> reqs(srankcount);
@@ -83,17 +111,16 @@ int DSDE_Exchangev_accumulate(
     MPI_Isend(sbuf, sendcounts[i], sendtype, sranks[i], 999, libcomm, &reqs[i]);
   }
 
-  // TODO: certainly not thread-safe!
-  mpi2os_recvs=0;
+  comminfo->mpi2os_recvs=0;
 
-  MPI_Win_fence(0, win);
+  MPI_Win_fence(0, comminfo->win);
   for(int i=0; i<srankcount; i++) { // fill senddests
     int x=1;
-    MPI_Accumulate(&x,1,MPI_INT,sranks[i],0,1,MPI_INT,MPI_SUM,win);
+    MPI_Accumulate(&x,1,MPI_INT,sranks[i],0,1,MPI_INT,MPI_SUM,comminfo->win);
   }
-  MPI_Win_fence(0, win);
+  MPI_Win_fence(0, comminfo->win);
 
-  const int recvs=mpi2os_recvs;
+  const int recvs=comminfo->mpi2os_recvs;
 
   state_data->lrranks = new std::vector<int>; // local rranks
   state_data->lrdispls = new std::vector<MPI_Aint>; // local rdispls
