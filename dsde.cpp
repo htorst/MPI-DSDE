@@ -1,3 +1,11 @@
+/*
+ * Copyright (c) 2012 The Trustees of University of Illinois.
+ *                    All rights reserved.
+ *
+ * Author(s): Torsten Hoefler <htor@illinois.edu>
+ *
+ */
+
 #include "dsde_internal.h"
 
 /* will hold duplicate of MPI_COMM_SELF, needed for DSDE_Memcpy */

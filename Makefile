@@ -29,3 +29,14 @@ main: main.cpp dsde.o *h libdsde.a
 
 clean:
 	rm -f *.o main libdsde.*
+	rm -rf libdsde-0.1
+	rm -rf libdsde-0.1.tgz
+
+
+dist:
+	rm -rf libdsde-0.1
+	mkdir libdsde-0.1
+	cp *cpp libdsde-0.1
+	cp *h libdsde-0.1
+	cp Makefile libdsde-0.1
+	tar czf libdsde-0.1.tgz libdsde-0.1

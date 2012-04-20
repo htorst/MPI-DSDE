@@ -1,4 +1,12 @@
 /*
+ * Copyright (c) 2012 The Trustees of University of Illinois.
+ *                    All rights reserved.
+ *
+ * Author(s): Torsten Hoefler <htor@illinois.edu>
+ *
+ */
+
+/*
  *  Created on: Dec 22, 2011
  *      Author: Adam Moody
  */

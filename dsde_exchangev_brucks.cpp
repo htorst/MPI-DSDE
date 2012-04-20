@@ -1,3 +1,11 @@
+/*
+ * Copyright (c) 2012 The Trustees of University of Illinois.
+ *                    All rights reserved.
+ *
+ * Author(s): Torsten Hoefler <htor@illinois.edu>
+ *
+ */
+
 /* Code for homogeneous systems */
 
 /* if sendtype is same on all ranks and if sendtype == recvtype on all ranks,

@@ -1,4 +1,12 @@
 /*
+ * Copyright (c) 2012 The Trustees of University of Illinois.
+ *                    All rights reserved.
+ *
+ * Author(s): Torsten Hoefler <htor@illinois.edu>
+ *
+ */
+
+/*
  * dsde_exchange_alltoall.c
  *
  *  Created on: Dec 8, 2011

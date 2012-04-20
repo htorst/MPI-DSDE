@@ -1,3 +1,11 @@
+/*
+ * Copyright (c) 2012 The Trustees of University of Illinois.
+ *                    All rights reserved.
+ *
+ * Author(s): Torsten Hoefler <htor@illinois.edu>
+ *
+ */
+
 /* This file defines the user interface to the DSDE library.  It should be as clean
  * as possible. */
 

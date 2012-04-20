@@ -1,3 +1,11 @@
+/*
+ * Copyright (c) 2012 The Trustees of University of Illinois.
+ *                    All rights reserved.
+ *
+ * Author(s): Torsten Hoefler <htor@illinois.edu>
+ *
+ */
+
 /* Code for homogeneous systems */
 
 /* Transfers message via Bruck's algorithm, inlines all data so works best with small messages */
