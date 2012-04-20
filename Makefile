@@ -38,5 +38,5 @@ dist:
 	mkdir libdsde-0.1
 	cp *cpp libdsde-0.1
 	cp *h libdsde-0.1
-	cp Makefile libdsde-0.1
+	cp Makefile LICENSE libdsde-0.1
 	tar czf libdsde-0.1.tgz libdsde-0.1
